@@ -1,0 +1,5 @@
+node_modules
+dist
+public/models
+public/mediapipe-wasm
+.DS_Store
