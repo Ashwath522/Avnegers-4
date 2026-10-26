@@ -122,18 +122,27 @@ export class Experience {
     });
   }
 
-  /** Use public/assets/models/<characterId>.glb (any rigged humanoid) instead of procedural armour when present. */
+  /** Use public/assets/models/<characterId>.glb or .fbx (Mixamo) when present; paint with character palette. */
   private async loadModel(def: CharacterDef) {
     this.modelStatus = 'loading'; this.modelMissing = [];
-    const m = await ModelRig.load(def.modelUrl ?? `/assets/models/${def.id}.glb`, this.particles);
+    const candidates = def.modelUrl
+      ? [def.modelUrl]
+      : [`/assets/models/${def.id}.glb`, `/assets/models/${def.id}.fbx`];
+    let m: ModelRig | null = null;
+    for (const url of candidates) {
+      m = await ModelRig.load(url, this.particles);
+      if (m) break;
+    }
     if (this.disposed || this.def !== def) { m?.dispose(); return; }
     if (!m) { this.modelStatus = 'procedural'; return; }
     this.model = m; this.modelMissing = m.missing;
     m.setEnergyColor(def.palette.energy);
+    // Recolor Mixamo / generic mesh to this character (Iron Man red-gold, etc.)
+    m.applyPalette(def.palette, def.surface);
     this.stage.root.add(m.root);
     if (this.rig) this.rig.proceduralHidden = true;
     this.modelStatus = 'model';
-    this.log(`Loaded 3D model for ${def.name}`);
+    this.log(`Loaded 3D model for ${def.name} (${def.palette.primary})`);
   }
 
   setSequence(steps: SequenceStep[]) {

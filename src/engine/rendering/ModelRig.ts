@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { BodyFrame, P3 } from '../tracking/types';
 import type { Particles } from './Particles';
 
@@ -48,6 +49,7 @@ export function resolveBones(names: string[]): Partial<Record<Slot, string>> {
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _wq = new THREE.Quaternion();
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
+function hash(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
 
 export class ModelRig {
   readonly root = new THREE.Group();
@@ -96,9 +98,29 @@ export class ModelRig {
       const head = await fetch(url, { method: 'HEAD' });
       const ct = head.headers.get('content-type') ?? '';
       if (!head.ok || ct.includes('text/html')) return null;
-      const gltf = await new GLTFLoader().loadAsync(url);
-      const rig = new ModelRig(gltf.scene, particles);
+
+      const lower = url.toLowerCase();
+      let scene: THREE.Object3D;
+      if (lower.endsWith('.fbx')) {
+        scene = await new FBXLoader().loadAsync(url);
+      } else {
+        const gltf = await new GLTFLoader().loadAsync(url);
+        scene = gltf.scene;
+      }
+
+      // Mixamo units are often cm — normalize height ~1.7m
+      const box = new THREE.Box3().setFromObject(scene);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 50 || (maxDim > 0 && maxDim < 0.1)) {
+        scene.scale.multiplyScalar(1.7 / maxDim);
+        scene.updateMatrixWorld(true);
+      }
+
+      const rig = new ModelRig(scene, particles);
       if (rig.missing.length) console.warn(`[model] ${url}: could not find bones for ${rig.missing.join(', ')}`);
+      else console.info(`[model] loaded ${url}`);
       return rig;
     } catch (e) {
       console.warn(`[model] failed to load ${url}`, e);
@@ -107,6 +129,122 @@ export class ModelRig {
   }
 
   setEnergyColor(c: string) { (this.scanLine.material as THREE.MeshBasicMaterial).color.set(c); }
+
+  /**
+   * Paint the loaded mesh with character palette so Mixamo X Bot reads as Iron Man / hero suit.
+   * Primary = armor body, trim = gold accents, energy = glowing core/eyes.
+   */
+  applyPalette(palette: { primary: string; secondary: string; trim: string; energy: string; eyes: string }, style: 'metal' | 'suit' | 'skin' | 'organic' = 'metal') {
+    const primary = new THREE.MeshPhysicalMaterial({
+      color: palette.primary,
+      metalness: style === 'metal' ? 0.92 : style === 'organic' ? 0.25 : 0.15,
+      roughness: style === 'metal' ? 0.28 : style === 'organic' ? 0.15 : 0.45,
+      clearcoat: style === 'metal' || style === 'organic' ? 0.9 : 0.2,
+      clearcoatRoughness: 0.12,
+      envMapIntensity: 1.8,
+    });
+    const trim = new THREE.MeshPhysicalMaterial({
+      color: palette.trim,
+      metalness: 1,
+      roughness: 0.15,
+      clearcoat: 0.85,
+      envMapIntensity: 2.0,
+    });
+    const secondary = new THREE.MeshStandardMaterial({
+      color: palette.secondary,
+      metalness: style === 'metal' ? 0.9 : 0.2,
+      roughness: 0.35,
+    });
+    const energy = new THREE.MeshBasicMaterial({ color: palette.energy, toneMapped: false });
+    const eyes = new THREE.MeshBasicMaterial({ color: palette.eyes, toneMapped: false });
+    this.mats.push(primary, trim, secondary, energy, eyes);
+
+    // Collect meshes and assign by height bands (feet→head) + name hints
+    const meshes: THREE.Mesh[] = [];
+    this.root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) meshes.push(mesh);
+    });
+    if (!meshes.length) return;
+
+    const worldBox = new THREE.Box3().setFromObject(this.root);
+    const minY = worldBox.min.y;
+    const spanY = Math.max(1e-3, worldBox.max.y - worldBox.min.y);
+
+    for (const mesh of meshes) {
+      const mb = new THREE.Box3().setFromObject(mesh);
+      const cy = (mb.min.y + mb.max.y) * 0.5;
+      const t = (cy - minY) / spanY; // 0 feet → 1 head
+      const name = (mesh.name || mesh.parent?.name || '').toLowerCase();
+
+      let mat: THREE.Material = primary;
+      // Head / face / eyes
+      if (/head|face|eye|helmet|skull|visor/.test(name) || t > 0.88) {
+        mat = /eye|visor|lens/.test(name) ? eyes : primary;
+      } else if (/hand|finger|glove|wrist/.test(name)) {
+        mat = primary;
+      } else if (/boot|foot|shoe|toe/.test(name) || t < 0.12) {
+        mat = trim; // gold boots
+      } else if (/shoulder|clavicle|arm|forearm|elbow|leg|thigh|calf|knee|shin|spine|chest|torso|pelvis|hip|body|mesh/.test(name)) {
+        // alternate some panels to gold for armor plate read
+        const useGold = /shoulder|knee|elbow|belt|collar|pelvis/.test(name) || (Math.abs(hash(name)) % 5 === 0);
+        mat = useGold ? trim : primary;
+      } else {
+        mat = t > 0.75 ? primary : t < 0.15 ? trim : primary;
+      }
+
+      // Keep clipping plane from constructor
+      const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const clip = list[0] && (list[0] as THREE.Material).clippingPlanes;
+      const applied = mat.clone();
+      if (clip) {
+        applied.clippingPlanes = clip;
+        applied.clipShadows = true;
+      }
+      this.mats.push(applied);
+      mesh.material = applied;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    }
+
+    // Attach a simple arc-reactor glow on the chest (hips→shoulders midpoint)
+    this.attachReactorGlow(palette.energy);
+  }
+
+  private attachReactorGlow(energyColor: string) {
+    const chest = this.bones.chest || this.bones.spine || this.bones.hips;
+    if (!chest) return;
+    // Remove old if any
+    const old = this.root.getObjectByName('__arcReactor');
+    if (old) old.removeFromParent();
+
+    const group = new THREE.Group();
+    group.name = '__arcReactor';
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.06, 0.012, 12, 32),
+      new THREE.MeshPhysicalMaterial({ color: '#d9a441', metalness: 1, roughness: 0.2 }),
+    );
+    const core = new THREE.Mesh(
+      new THREE.CircleGeometry(0.045, 32),
+      new THREE.MeshBasicMaterial({ color: energyColor, toneMapped: false }),
+    );
+    core.position.z = 0.01;
+    const glowMat = new THREE.SpriteMaterial({
+      color: energyColor,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const glow = new THREE.Sprite(glowMat);
+    glow.scale.setScalar(0.25);
+    glow.position.z = 0.05;
+    group.add(ring, core, glow);
+    // Offset forward from chest bone
+    group.position.set(0, 0.12, 0.12);
+    chest.add(group);
+    this.mats.push(ring.material as THREE.Material, core.material as THREE.Material, glowMat);
+  }
 
   /** Rotate `bone` (world space) so its rest direction toward `child` points along `desired`. */
   private aim(bone: THREE.Object3D | undefined, child: THREE.Object3D | undefined, from: P3, to: P3, scale: number) {
