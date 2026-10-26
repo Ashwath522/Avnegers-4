@@ -4,9 +4,9 @@ import { useExperience } from '../ui/useExperience';
 import type { WorldPreset } from '../engine/world/World';
 
 const PRESETS: { id: WorldPreset; label: string; desc: string }[] = [
-  { id: 'blocks', label: 'Concrete blocks', desc: '80 HP, fracture into 9 chunks' },
-  { id: 'dummies', label: 'Training dummies', desc: '100 HP, heavy knockback' },
-  { id: 'wall', label: 'Walls', desc: '300–400 HP, fracture into 32 chunks' },
+  { id: 'blocks', label: 'Concrete blocks', desc: '80 HP · cracks where hit, shatters into ~20 shards' },
+  { id: 'dummies', label: 'Training dummies', desc: '100 HP · knockback, cracks, shatters' },
+  { id: 'wall', label: 'Walls', desc: '300–400 HP brick · ~34 shards' },
   { id: 'drones', label: 'Hover drones', desc: '40 HP, fall when grabbed' },
   { id: 'live', label: 'Mixed arena', desc: 'A bit of everything' },
 ];
@@ -24,7 +24,7 @@ export function DestructionLab() {
       </div>
       <div className="stack">
         <Panel title="Destruction & physics lab" right={<CharacterPicker />}>
-          <p className="sub">Targets are rigid bodies with HP. Hits only register when a projectile, web, tendril or shockwave actually reaches them. Destroyed targets fracture into simulated debris.</p>
+          <p className="sub">Targets are rigid bodies with HP. Hits only register when a projectile, web, tendril or shockwave actually reaches them. Hits crack the surface where they land and knock off chips; destroyed targets shatter into irregular Voronoi shards (smaller near the impact) that tumble, bounce and settle as rubble.</p>
           <div className="list">{PRESETS.map((p) => <div key={p.id} className="item" onClick={() => exp?.world.setPreset(p.id)}><div><div className="title">{p.label}</div><div className="desc">{p.desc}</div></div></div>)}</div>
           <div className="row" style={{ marginTop: 10 }}><button className="btn" onClick={() => exp?.world.resetAll()}>Respawn all</button></div>
         </Panel>

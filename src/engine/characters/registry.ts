@@ -60,7 +60,7 @@ export const TITAN: CharacterDef = {
   name: 'Verdant Titan',
   archetype: 'Massive superhuman powerhouse',
   tagline: 'Pure strength',
-  palette: { primary: '#3f8a3a', secondary: '#2b2622', trim: '#5c4a35', energy: '#38ff8b', eyes: '#b9ffcf' },
+  palette: { primary: '#2f6e2c', secondary: '#2b2622', trim: '#5c4a35', energy: '#38ff8b', eyes: '#b9ffcf' },
   surface: 'skin', headStyle: 'bare', bulk: 1.6,
   components: BODY.filter((c) => c !== 'core'),
   powers: [

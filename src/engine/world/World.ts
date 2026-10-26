@@ -2,26 +2,14 @@ import * as THREE from 'three';
 import { applyHit, integrate, makeTarget, segmentHitsBox, settleState, type PhysParams, type TargetBody, type TargetKind } from './targetLogic';
 import type { Particles } from '../rendering/Particles';
 import { makeGlow } from '../rendering/Stage';
+import { CrackSurface, Dust, chipGeometries, fractureBox } from './fracture';
 
 export type WorldPreset = 'live' | 'dummies' | 'blocks' | 'wall' | 'drones' | 'empty';
 
-interface TargetView { body: TargetBody; group: THREE.Group; mats: THREE.MeshStandardMaterial[]; hpBar: THREE.Mesh; hpBack: THREE.Mesh; baseColors: THREE.Color[]; spawn: number }
-interface Chunk { mesh: THREE.Mesh; x: number; y: number; z: number; vx: number; vy: number; vz: number; ax: number; ay: number; av: number; life: number; half: number }
-
-let concreteTex: THREE.Texture | null = null;
-function concrete() {
-  if (concreteTex) return concreteTex;
-  const c = document.createElement('canvas'); c.width = c.height = 128;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#8d8a85'; g.fillRect(0, 0, 128, 128);
-  const img = g.getImageData(0, 0, 128, 128);
-  for (let i = 0; i < img.data.length; i += 4) { const n = (Math.random() - 0.5) * 50; img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n; }
-  g.putImageData(img, 0, 0);
-  g.strokeStyle = 'rgba(40,40,40,0.5)'; g.lineWidth = 1;
-  for (let k = 0; k < 5; k++) { g.beginPath(); g.moveTo(Math.random() * 128, Math.random() * 128); g.lineTo(Math.random() * 128, Math.random() * 128); g.stroke(); }
-  concreteTex = new THREE.CanvasTexture(c); concreteTex.colorSpace = THREE.SRGBColorSpace;
-  return concreteTex;
-}
+interface TargetView { body: TargetBody; group: THREE.Group; mats: THREE.MeshStandardMaterial[]; hpBar: THREE.Mesh; hpBack: THREE.Mesh; baseColors: THREE.Color[]; spawn: number; surface: CrackSurface | null; depth: number }
+interface Chunk { mesh: THREE.Mesh; vel: THREE.Vector3; ang: THREE.Vector3; life: number; radius: number; resting: boolean; ownsMat: boolean }
+const MAX_CHUNKS = 450;
+const _q = new THREE.Quaternion(), _axis = new THREE.Vector3();
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 20);
@@ -39,10 +27,13 @@ export class World {
   gravityMult = 1;
   W = 1; H = 1;
   onDestroyed: (t: TargetBody) => void = () => {};
+  private flashes: { s: THREE.Sprite; t: number }[] = [];
   private shockFx: { ring: THREE.Mesh; t: number; dur: number; maxR: number; flat: number }[] = [];
   private time = 0;
 
-  constructor(private particles: Particles) {}
+  readonly dust = new Dust();
+  private surfaces: CrackSurface[] = [];
+  constructor(private particles: Particles) { this.group.add(this.dust.group); }
 
   get targets() { return this.views.map((v) => v.body); }
 
@@ -85,25 +76,30 @@ export class World {
     const group = new THREE.Group();
     const mats: THREE.MeshStandardMaterial[] = [];
     const M = (opts: THREE.MeshStandardMaterialParameters) => { const m = new THREE.MeshStandardMaterial({ transparent: true, ...opts }); mats.push(m); return m; };
+    let surface: CrackSurface | null = null;
+    let depth = Math.min(w, h) * 0.8;
     if (kind === 'dummy') {
-      const torso = new THREE.Mesh(CYL, M({ color: '#d8782a', roughness: 0.6 })); torso.scale.set(w, h * 0.72, w * 0.8); torso.position.y = -h * 0.1;
+      surface = new CrackSurface('paint', '#d8782a');
+      const torso = new THREE.Mesh(CYL, M({ color: '#ffffff', map: surface.texture, roughness: 0.6 })); torso.scale.set(w, h * 0.72, w * 0.8); torso.position.y = -h * 0.1;
       const head = new THREE.Mesh(SPH, M({ color: '#e0a060', roughness: 0.5 })); head.scale.setScalar(w * 0.75); head.position.y = h * 0.38;
       const band = new THREE.Mesh(CYL, M({ color: '#202020', roughness: 0.4 })); band.scale.set(w * 1.04, h * 0.08, w * 0.85); band.position.y = h * 0.05;
-      group.add(torso, head, band);
+      group.add(torso, head, band); depth = w * 0.8;
     } else if (kind === 'block' || kind === 'wall') {
-      const box = new THREE.Mesh(BOX, M({ color: kind === 'wall' ? '#a8a29a' : '#ffffff', map: concrete(), roughness: 0.95 }));
-      box.scale.set(w, h, Math.min(w, h) * 0.8); group.add(box);
+      surface = new CrackSurface(kind === 'wall' ? 'brick' : 'concrete');
+      const box = new THREE.Mesh(BOX, M({ color: kind === 'wall' ? '#b29a8c' : '#a8a39b', map: surface.texture, roughness: 0.95 }));
+      box.scale.set(w, h, depth); group.add(box);
     } else {
       const shell = new THREE.Mesh(BOX, M({ color: '#3a4250', metalness: 0.8, roughness: 0.3 })); shell.scale.set(w, h * 0.5, w * 0.7);
       const eye = new THREE.Mesh(SPH, M({ color: '#ff3b3b', emissive: '#ff2020', emissiveIntensity: 2 })); eye.scale.setScalar(h * 0.35); eye.position.z = w * 0.35;
       const glow = makeGlow('#ff4040', h * 1.2, 0.6); glow.position.z = w * 0.4;
-      group.add(shell, eye, glow);
+      group.add(shell, eye, glow); depth = w * 0.7;
     }
+    if (surface) this.surfaces.push(surface);
     const hpBack = new THREE.Mesh(PLANE, new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.6 }));
     const hpBar = new THREE.Mesh(PLANE, new THREE.MeshBasicMaterial({ color: '#33ff88' }));
     hpBack.renderOrder = hpBar.renderOrder = 30;
     this.group.add(group, hpBack, hpBar);
-    const view: TargetView = { body, group, mats, hpBar, hpBack, baseColors: mats.map((m) => m.color.clone()), spawn: 0 };
+    const view: TargetView = { body, group, mats, hpBar, hpBack, baseColors: mats.map((m) => m.color.clone()), spawn: 0, surface, depth };
     this.views.push(view);
     return view;
   }
@@ -149,41 +145,82 @@ export class World {
   markTargeted(t: TargetBody) { t.targetedTimer = 0.2; }
 
   hit(t: TargetBody, damage: number, ix: number, iy: number, px: number, py: number, color: string) {
+    const v = this.views.find((x) => x.body === t);
     const destroyed = applyHit(t, damage, ix, iy);
+    const sev = Math.min(1, damage / t.maxHp * 2.2);
     this.particles.emit({ x: px, y: py, count: 26, color, speed: 520, size: 16, life: 0.45, drag: 3 });
-    this.particles.emit({ x: px, y: py, count: 14, color: '#bdb6aa', speed: 260, size: 22, life: 0.9, drag: 2, gravity: 300 });
+    if (v && t.kind !== 'drone') {
+      // crack the surface where the hit actually landed
+      const u = (px - (t.x - t.w / 2)) / t.w, vv = (py - (t.y - t.h / 2)) / t.h;
+      v.surface?.crack(Math.min(1, Math.max(0, u)), Math.min(1, Math.max(0, vv)), sev);
+      this.spall(v, px, py, ix, iy, 3 + Math.round(sev * 8));
+      this.dust.emit(px, py, 2 + Math.round(sev * 4), Math.min(t.w, t.h) * 0.5);
+    } else if (v) {
+      this.particles.emit({ x: px, y: py, count: 18, color: '#ffd27a', speed: 700, size: 6, life: 0.4, gravity: 900, drag: 1 });
+    }
     if (destroyed) this.fracture(t, ix, iy, px, py);
     return destroyed;
   }
 
-  /** Pre-fractured grid of chunks inheriting the target's material, thrown by the impact impulse. */
+  /** Small chips knocked off the surface at the impact point. */
+  private spall(v: TargetView, px: number, py: number, ix: number, iy: number, n: number) {
+    const chips = chipGeometries();
+    const t = v.body;
+    const sz = Math.min(t.w, t.h) * 0.09;
+    const im = Math.hypot(ix, iy) || 1;
+    for (let k = 0; k < n; k++) {
+      const m = new THREE.Mesh(chips[k % chips.length], v.mats[0]);
+      m.scale.setScalar(sz * (0.4 + Math.random() * 0.8));
+      m.position.set(px, py, v.depth * 0.5);
+      // chips fly back toward the attacker and outward
+      const vel = new THREE.Vector3(-(ix / im) * (150 + Math.random() * 350) + (Math.random() - 0.5) * 300, 150 + Math.random() * 400, 100 + Math.random() * 250);
+      this.addChunk(m, vel, 0.5 * sz, 3 + Math.random() * 2, false);
+    }
+  }
+
+  private addChunk(mesh: THREE.Mesh, vel: THREE.Vector3, radius: number, life: number, ownsMat: boolean) {
+    if (this.chunks.length >= MAX_CHUNKS) { const old = this.chunks.shift()!; old.mesh.removeFromParent(); if (old.ownsMat) (old.mesh.material as THREE.Material).dispose(); }
+    const ang = new THREE.Vector3((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12);
+    mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+    this.group.add(mesh);
+    this.chunks.push({ mesh, vel, ang, life, radius, resting: false, ownsMat });
+  }
+
+  /** Voronoi fracture: irregular shards, smaller near the impact, thrown by the actual impulse. */
   private fracture(t: TargetBody, ix: number, iy: number, px: number, py: number) {
     const v = this.views.find((x) => x.body === t);
     if (!v) return;
     v.group.visible = false; v.hpBar.visible = v.hpBack.visible = false;
-    const nx = t.kind === 'wall' ? 4 : 3, ny = t.kind === 'wall' ? 8 : t.kind === 'dummy' ? 5 : 3;
-    const cw = t.w / nx, ch = t.h / ny;
-    const mat = v.mats[0].clone(); mat.emissive?.set('#000000');
+    const local = { x: px - t.x, y: py - t.y };
+    const seeds = t.kind === 'wall' ? 34 : t.kind === 'drone' ? 10 : t.kind === 'dummy' ? 16 : 20;
+    const shards = fractureBox(t.w, t.h, v.depth, local, seeds);
+    const mat = v.mats[0].clone(); mat.emissive?.set('#000000'); mat.transparent = true;
     const imp = Math.hypot(ix, iy) / t.mass;
     const idir = imp > 0 ? { x: ix / t.mass / imp, y: iy / t.mass / imp } : { x: 0, y: 1 };
-    for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
-      const cx = t.x - t.w / 2 + cw * (i + 0.5), cy = t.y - t.h / 2 + ch * (j + 0.5);
-      const s = 0.7 + Math.random() * 0.35;
-      const mesh = new THREE.Mesh(BOX, mat);
-      const half = Math.min(cw, ch) * s / 2;
-      mesh.scale.set(cw * s, ch * s, Math.min(cw, ch) * s);
-      const rx = cx - px, ry = cy - py, rl = Math.hypot(rx, ry) || 1;
-      const speed = Math.min(1600, imp * 0.6 + 200);
-      this.chunks.push({
-        mesh, x: cx, y: cy, z: 0, half,
-        vx: idir.x * speed * (0.5 + Math.random()) + (rx / rl) * 180 * Math.random(),
-        vy: idir.y * speed * (0.5 + Math.random()) + (ry / rl) * 180 * Math.random() + 250,
-        vz: (Math.random() - 0.5) * 300,
-        ax: Math.random(), ay: Math.random(), av: (Math.random() - 0.5) * 14, life: 3.5 + Math.random(),
-      });
-      this.group.add(mesh);
+    const span = Math.hypot(t.w, t.h);
+    for (const sh of shards) {
+      const mesh = new THREE.Mesh(sh.geometry, mat);
+      mesh.position.set(t.x + sh.center.x, t.y + sh.center.y, sh.center.z);
+      const rx = sh.center.x - local.x, ry = sh.center.y - local.y, rl = Math.hypot(rx, ry) || 1;
+      const near = 1 - Math.min(1, rl / span); // pieces near the impact fly fastest
+      const speed = Math.min(1800, imp * 0.5 + 150) * (0.35 + near * 0.9);
+      const vel = new THREE.Vector3(
+        idir.x * speed + (rx / rl) * 260 * near + (Math.random() - 0.5) * 120,
+        idir.y * speed + (ry / rl) * 220 * near + 180 * Math.random(),
+        (Math.random() - 0.2) * 320 * near,
+      );
+      this.addChunk(mesh, vel, sh.radius, 7 + Math.random() * 3, false);
+      mesh.rotation.set(0, 0, 0);
     }
-    this.particles.emit({ x: t.x, y: t.y, count: 60, color: '#c8c0b2', speed: 400, size: 26, life: 1.2, drag: 2.5, gravity: 200, radius: Math.min(t.w, t.h) / 2 });
+    if (t.kind === 'drone') {
+      const boom = makeGlow('#ff8a2a', Math.max(t.w, t.h) * 4, 1); boom.position.set(t.x, t.y, 800);
+      this.group.add(boom); this.flashes.push({ s: boom, t: 0 });
+      this.particles.emit({ x: t.x, y: t.y, count: 80, color: '#ff9a3a', speed: 600, size: 18, life: 0.7, drag: 2 });
+      this.dust.emit(t.x, t.y, 8, Math.max(t.w, t.h) * 1.2, '#3a3632');
+    } else {
+      this.dust.emit(t.x, t.y, 10 + Math.round(t.w * t.h / 4000), Math.min(t.w, t.h) * 0.9, '#b9b2a6', 1.6);
+      this.particles.emit({ x: px, y: py, count: 30, color: '#e8e0d0', speed: 500, size: 8, life: 0.6, gravity: 900, drag: 1.5 });
+    }
     this.onDestroyed(t);
     if (this.autoRespawnMs > 0) setTimeout(() => this.respawn(v), this.autoRespawnMs);
   }
@@ -192,6 +229,11 @@ export class World {
     if (!this.views.includes(v)) return;
     const b = v.body;
     Object.assign(b, makeTarget(b.id, b.kind, b.homeX, b.homeY, b.w, b.h, b.maxHp));
+    if (v.surface) {
+      const fresh = new CrackSurface(b.kind === 'wall' ? 'brick' : b.kind === 'dummy' ? 'paint' : 'concrete', '#d8782a');
+      this.surfaces.push(fresh);
+      v.mats[0].map = fresh.texture; v.mats[0].needsUpdate = true; v.surface = fresh;
+    }
     v.group.visible = true; v.spawn = 0;
   }
 
@@ -236,16 +278,31 @@ export class World {
     const g = this.phys.groundY;
     for (let i = this.chunks.length - 1; i >= 0; i--) {
       const c = this.chunks[i];
+      const m = c.mesh;
       c.life -= dt;
-      c.vy -= this.phys.gravity * dt;
-      c.x += c.vx * dt; c.y += c.vy * dt; c.z += c.vz * dt;
-      if (c.y - c.half < g) { c.y = g + c.half; c.vy = Math.abs(c.vy) * this.phys.restitution; c.vx *= 0.7; c.av *= 0.7; if (c.vy < 40) c.vy = 0; }
-      if (c.x < 0 || c.x > this.W) c.vx = -c.vx * 0.5;
-      c.mesh.position.set(c.x, c.y, c.z);
-      c.mesh.rotation.x += c.av * c.ax * dt; c.mesh.rotation.y += c.av * c.ay * dt; c.mesh.rotation.z += c.av * dt;
-      const m = c.mesh.material as THREE.MeshStandardMaterial;
-      if (c.life < 1) { m.opacity = Math.max(0, c.life); }
-      if (c.life <= 0) { c.mesh.removeFromParent(); this.chunks.splice(i, 1); }
+      if (!c.resting) {
+        c.vel.y -= this.phys.gravity * dt;
+        c.vel.multiplyScalar(Math.exp(-0.15 * dt));
+        m.position.addScaledVector(c.vel, dt);
+        const angLen = c.ang.length();
+        if (angLen > 1e-4) { _axis.copy(c.ang).divideScalar(angLen); _q.setFromAxisAngle(_axis, angLen * dt); m.quaternion.premultiply(_q); }
+        const bottom = m.position.y - c.radius * 0.55;
+        if (bottom < g) {
+          m.position.y = g + c.radius * 0.55;
+          if (c.vel.y < 0) c.vel.y = -c.vel.y * this.phys.restitution * 0.7;
+          c.vel.x *= 0.6; c.vel.z *= 0.6; c.ang.multiplyScalar(0.55);
+          if (Math.abs(c.vel.y) < 60 && Math.hypot(c.vel.x, c.vel.z) < 40) c.resting = true; // settle as rubble
+        }
+        if (m.position.x < 0 || m.position.x > this.W) { c.vel.x = -c.vel.x * 0.4; m.position.x = Math.max(0, Math.min(this.W, m.position.x)); }
+      }
+      if (c.life < 1.5) m.position.y -= c.radius * 0.9 * dt; // rubble sinks into the ground before disappearing
+      if (c.life <= 0) { m.removeFromParent(); if (c.ownsMat) (m.material as THREE.Material).dispose(); if (!chipGeometries().includes(m.geometry)) m.geometry.dispose(); this.chunks.splice(i, 1); }
+    }
+    this.dust.update(dt);
+    for (let i = this.flashes.length - 1; i >= 0; i--) {
+      const f = this.flashes[i]; f.t += dt;
+      f.s.material.opacity = Math.max(0, 1 - f.t / 0.35); f.s.scale.multiplyScalar(1 + dt * 2);
+      if (f.t > 0.35) { f.s.removeFromParent(); f.s.material.dispose(); this.flashes.splice(i, 1); }
     }
     for (let i = this.shockFx.length - 1; i >= 0; i--) {
       const s = this.shockFx[i];
@@ -259,8 +316,10 @@ export class World {
   }
 
   dispose() {
-    for (const c of this.chunks) c.mesh.removeFromParent();
+    for (const c of this.chunks) { c.mesh.removeFromParent(); c.mesh.geometry !== undefined && !chipGeometries().includes(c.mesh.geometry) && c.mesh.geometry.dispose(); }
     this.chunks = [];
+    this.dust.dispose();
+    this.surfaces.forEach((x) => x.dispose()); this.surfaces = [];
     for (const v of this.views) v.mats.forEach((m) => m.dispose());
     this.group.removeFromParent();
   }

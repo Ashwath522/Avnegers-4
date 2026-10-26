@@ -80,7 +80,13 @@ export function Viewport({ vref, exp, snap, className = 'tall', allowSim = true,
           </Panel>
         </div>
       )}
-      {status === 'loading' && !snap?.simulated && <div className="hint">Starting camera and loading tracking models…<br /><span className="muted small">First load downloads ~10 MB of MediaPipe models.</span></div>}
+      {status === 'loading' && !snap?.simulated && (
+        <div className="hint">
+          {exp?.tracker.stage || 'Starting camera and loading tracking models…'}<br />
+          <span className="muted small">First load downloads ~10 MB of MediaPipe models.</span>
+          {allowSim && <div style={{ marginTop: 8 }}><button className="btn sm" onClick={() => { if (exp) exp.tracker.simulate = true; }}>Use simulated mannequin meanwhile</button></div>}
+        </div>
+      )}
       {status === 'searching' && !snap?.simulated && <div className="hint">Step into frame — stand 1.5–2.5 m back so your upper body (ideally full body) is visible.</div>}
       {status === 'lost' && !snap?.simulated && <div className="hint">Tracking lost — step back into the frame.</div>}
       {children}

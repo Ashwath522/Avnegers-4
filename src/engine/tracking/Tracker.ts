@@ -29,6 +29,13 @@ export interface TrackerSettings {
 
 type Listener = () => void;
 
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise<T>((res, rej) => {
+    const t = setTimeout(() => rej(new Error(msg)), ms);
+    p.then((v) => { clearTimeout(t); res(v); }, (e) => { clearTimeout(t); rej(e); });
+  });
+}
+
 async function localAvailable(url: string): Promise<boolean> {
   try {
     const r = await fetch(url, { method: 'HEAD' });
@@ -47,6 +54,8 @@ export class Tracker {
   readonly video: HTMLVideoElement;
   status: TrackingStatus = 'idle';
   error = '';
+  /** human-readable loading stage, shown while status === 'loading' */
+  stage = '';
   settings: TrackerSettings = { deviceId: null, mirror: true, poseModel: 'lite', handsEnabled: true, minCutoff: 1.2, beta: 0.015 };
   inferenceMs = 0;
   detectFps = 0;
@@ -114,13 +123,20 @@ export class Tracker {
 
   async retry() { this.stopCamera(); await this.start(); }
 
+  private setStage(s: string) { this.stage = s; console.info(`[tracker] ${s}`); this.emit(); }
+
   private async start() {
     this.setStatus('loading');
+    this.setStage('Requesting camera…');
+    // Camera and models load independently, so the video shows as soon as the camera is ready.
+    const cam = this.startCamera().then(() => { if (this.stream && !this.pose) this.setStage('Camera ready — loading tracking models…'); });
+    const models = this.loadModels();
     try {
-      await Promise.all([this.startCamera(), this.loadModels()]);
-      if (this.stream) this.setStatus('searching');
+      await Promise.all([cam, models]);
+      if (this.stream) { this.setStage(''); this.setStatus('searching'); }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      console.error('[tracker]', e);
       if (this.status !== 'denied' && this.status !== 'no-camera') this.setStatus('error', msg);
     }
   }
@@ -129,13 +145,15 @@ export class Tracker {
     if (!navigator.mediaDevices?.getUserMedia) { this.setStatus('no-camera', 'This browser does not support camera access (needs HTTPS or localhost).'); throw new Error('no mediaDevices'); }
     this.stream?.getTracks().forEach((t) => t.stop());
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      const req = navigator.mediaDevices.getUserMedia({
         video: {
           deviceId: this.settings.deviceId ? { exact: this.settings.deviceId } : undefined,
           width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
         },
         audio: false,
       });
+      const slow = setTimeout(() => this.setStage('Still waiting for the camera — accept the browser permission prompt. On macOS also check System Settings › Privacy & Security › Camera for your browser.'), 6000);
+      try { this.stream = await req; } finally { clearTimeout(slow); }
     } catch (e) {
       const name = (e as DOMException)?.name;
       this.stream = null;
@@ -162,22 +180,31 @@ export class Tracker {
   private async loadModels() {
     const posKey = this.settings.poseModel === 'full' ? 'pose_full' : 'pose_lite';
     if (this.pose && this.loadedPoseModel === posKey && (this.hands || !this.settings.handsEnabled)) return;
+    const T = 45000;
+    const hint = 'Check your internet connection, or run "npm run fetch-models" once and restart the dev server to load models locally.';
     const wasmLocal = await localAvailable('/mediapipe-wasm/vision_wasm_internal.js');
-    const vision = await FilesetResolver.forVisionTasks(wasmLocal ? '/mediapipe-wasm' : CDN_WASM);
+    const wasmBase = wasmLocal ? '/mediapipe-wasm' : CDN_WASM;
+    this.setStage(`Loading MediaPipe runtime (${wasmLocal ? 'local' : 'jsDelivr CDN'})…`);
+    const vision = await withTimeout(FilesetResolver.forVisionTasks(wasmBase), T, `Timed out loading the MediaPipe runtime from ${wasmBase}. ${hint}`);
     const model = async (k: string) => (await localAvailable(LOCAL_MODELS[k])) ? LOCAL_MODELS[k] : CDN_MODELS[k];
-    const make = async <T>(fn: (delegate: 'GPU' | 'CPU') => Promise<T>) => {
-      try { return await fn('GPU'); } catch { return await fn('CPU'); }
+    const make = async <T>(name: string, url: string, fn: (delegate: 'GPU' | 'CPU') => Promise<T>) => {
+      this.setStage(`Loading ${name} (${url.startsWith('/') ? 'local' : 'Google CDN'}, GPU)…`);
+      try { return await withTimeout(fn('GPU'), T, 'gpu-timeout'); } catch (e) {
+        console.warn(`[tracker] ${name} GPU init failed, retrying on CPU`, e);
+        this.setStage(`Loading ${name} (CPU fallback)…`);
+        return await withTimeout(fn('CPU'), T, `Timed out loading ${name} from ${url}. ${hint}`);
+      }
     };
     const poseUrl = await model(posKey);
     const handUrl = await model('hand');
     this.pose?.close();
-    this.pose = await make((delegate) => PoseLandmarker.createFromOptions(vision, {
+    this.pose = await make('pose model', poseUrl, (delegate) => PoseLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: poseUrl, delegate }, runningMode: 'VIDEO', numPoses: 1,
       minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
     }));
     this.loadedPoseModel = posKey;
     if (!this.hands) {
-      this.hands = await make((delegate) => HandLandmarker.createFromOptions(vision, {
+      this.hands = await make('hand model', handUrl, (delegate) => HandLandmarker.createFromOptions(vision, {
         baseOptions: { modelAssetPath: handUrl, delegate }, runningMode: 'VIDEO', numHands: 2,
         minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5,
       }));
@@ -186,7 +213,7 @@ export class Tracker {
 
   /** Run detection on the newest video frame (if any) and return a smoothed frame in stage space. */
   process(now: number, W: number, H: number): BodyFrame | null {
-    if (this.simulate && !this.stream) return this.buildSimFrame(now, W, H);
+    if (this.simulate && (!this.stream || !this.pose)) return this.buildSimFrame(now, W, H);
     const v = this.video;
     if (!this.stream || !this.pose || v.readyState < 2 || !v.videoWidth) return this.cached;
     if (v.currentTime !== this.lastVideoTime) {

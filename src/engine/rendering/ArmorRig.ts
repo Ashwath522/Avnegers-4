@@ -5,6 +5,7 @@ import { dist2 } from '../tracking/types';
 import { createSuitMaterials, type SuitMaterials } from './materials';
 import { makeGlow } from './Stage';
 import { Tube } from './Tube';
+import { limbGeometry, pauldronGeometries, torsoGeometry } from './shapes';
 import type { Particles } from './Particles';
 
 /**
@@ -18,7 +19,6 @@ const UNIT_RING = new THREE.CylinderGeometry(1.06, 1.06, 0.1, 20, 1);
 const UNIT_SPHERE = new THREE.SphereGeometry(1, 24, 16);
 const UNIT_DOME = new THREE.SphereGeometry(1, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.62);
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
-const TORSO = new THREE.CylinderGeometry(0.5, 0.37, 1, 28, 1);
 const DISC = new THREE.CylinderGeometry(0.5, 0.5, 0.12, 32);
 const FINGER = new THREE.CylinderGeometry(1, 1, 1, 10, 1);
 
@@ -78,7 +78,7 @@ export class ArmorRig {
     const d = this.def, s = d.surface, bulk = d.bulk;
     const mesh = (geo: THREE.BufferGeometry, mat: THREE.Material) => new THREE.Mesh(geo, mat);
     const limb = (a: Joint, b: Joint, rK: number, distal: boolean, matKey: 'primary' | 'secondary' = 'primary') => this.add(id, [a, b], (g, m) => {
-      const main = mesh(UNIT_CYL, m[matKey]);
+      const main = mesh(limbGeometry(s, distal), m[matKey]);
       const ring = mesh(UNIT_RING, s === 'metal' ? (distal ? m.trim : m.secondary) : m.secondary);
       ring.position.y = 0.32;
       const extra = s === 'metal' ? mesh(UNIT_BOX, m.primary) : s === 'skin' ? mesh(UNIT_SPHERE, m[matKey]) : null;
@@ -118,6 +118,10 @@ export class ArmorRig {
           const band = mesh(UNIT_RING, s === 'metal' ? m.trim : m.secondary);
           band.position.y = 0.35; band.scale.set(0.82, 0.6, 0.82);
           g.add(dome); if (s === 'metal') dome.add(band);
+          if (s === 'metal') {
+            // layered plates
+            pauldronGeometries().slice(1).forEach((pg, i) => { const layer = mesh(pg, i === 0 ? m.secondary : m.primary); layer.position.y = -0.22 * (i + 1); layer.scale.setScalar(1.04); dome.add(layer); });
+          }
           return (f) => {
             const J = f.joints[j];
             const other = f.joints[j === 'lShoulder' ? 'rShoulder' : 'lShoulder'];
@@ -131,7 +135,7 @@ export class ArmorRig {
         });
       }
       case 'chest': return this.add(id, ['lShoulder', 'rShoulder', 'lHip', 'rHip'], (g, m) => {
-        const torso = mesh(TORSO, m.primary);
+        const torso = mesh(torsoGeometry(s), m.primary);
         g.add(torso);
         const details: THREE.Mesh[] = [];
         if (s === 'metal') {
@@ -377,7 +381,7 @@ export class ArmorRig {
       for (const m of c.mats) {
         m.opacity = op;
         const sm = m as THREE.MeshStandardMaterial;
-        if (sm.emissive && this.def.surface !== 'organic') { sm.emissive.set(this.def.palette.energy); sm.emissiveIntensity = flash * 0.9; }
+        if (sm.emissive && this.def.surface !== 'organic') { sm.emissive.set(this.def.palette.energy); sm.emissiveIntensity = (sm.userData.baseEmissive ?? 0) + flash * 0.9; }
       }
     }
     // palm emitters
