@@ -23,3 +23,22 @@ materialization effects and opacity handling work on `Comp.group`, so they keep 
 
 Do not add third-party character models/textures without a license that permits it. Never use assets depicting
 existing copyrighted characters.
+
+## Using real 3D character models (implemented)
+`src/engine/rendering/ModelRig.ts` drives any **rigged humanoid** glTF/GLB from the tracked body:
+torso orientation from hips→shoulders and the shoulder line, then every limb bone is aimed at its tracked
+child joint, using the model's own bone lengths to recover depth. Fingers keep their rest pose.
+
+1. Put the file at `public/assets/models/<characterId>.glb` — `apex.glb`, `webrunner.glb`, `titan.glb`, `symbiont.glb`
+   (or set `modelUrl` in `src/engine/characters/registry.ts`).
+2. Reload. The Armory shows "3D model loaded"; the procedural armour is hidden (palm emitters, powers, Symbiont
+   tendrils stay). The transformation becomes a scan line that materializes the model from the feet up.
+
+Supported bone naming: Mixamo (`mixamorig:LeftArm`…), VRM/Unity humanoid (`LeftUpperArm`…), Unreal/Blender
+(`upperarm_l`, `thigh_r`, `calf_l`…). Missing bones are listed in the Armory.
+
+Rigging tips: export from Blender as glTF Binary, Y-up, +Y forward or facing the viewer (the loader auto-flips a
+model that faces away). Any static character mesh can be auto-rigged with Mixamo, then exported to GLB.
+
+Only use models you have the rights to. Models of existing film/comic characters are owned by their rights holders.
+Verified with: three.js `Xbot.glb` (Mixamo rig) in headless tests — not shipped in this repo.

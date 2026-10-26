@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Stage } from './rendering/Stage';
 import { Particles } from './rendering/Particles';
 import { ArmorRig } from './rendering/ArmorRig';
+import { ModelRig } from './rendering/ModelRig';
 import { World, type WorldPreset } from './world/World';
 import { Tracker } from './tracking/Tracker';
 import { GestureEngine, type GestureEvent, type GestureSnapshot } from './gestures/GestureEngine';
@@ -35,6 +36,7 @@ export interface ExperienceSnapshot {
   events: string[];
   recording: boolean; recordingMs: number;
   targets: { total: number; destroyed: number };
+  model: { status: 'procedural' | 'loading' | 'model'; missing: string[] };
 }
 
 const BONES: [string, string][] = [['lShoulder', 'rShoulder'], ['lShoulder', 'lElbow'], ['lElbow', 'lWrist'], ['rShoulder', 'rElbow'], ['rElbow', 'rWrist'], ['lShoulder', 'lHip'], ['rShoulder', 'rHip'], ['lHip', 'rHip'], ['lHip', 'lKnee'], ['lKnee', 'lAnkle'], ['rHip', 'rKnee'], ['rKnee', 'rAnkle']];
@@ -48,6 +50,9 @@ export class Experience {
   readonly seq = new Sequencer();
   readonly tracker = Tracker.instance;
   private rig: ArmorRig | null = null;
+  private model: ModelRig | null = null;
+  modelStatus: 'procedural' | 'loading' | 'model' = 'procedural';
+  modelMissing: string[] = [];
   private controller: PowerController | null = null;
   def: CharacterDef | null = null;
   private steps: SequenceStep[] = [];
@@ -100,9 +105,11 @@ export class Experience {
     const wasComplete = this.seq.state === 'complete';
     this.controller?.dispose();
     this.rig?.dispose();
+    this.model?.dispose(); this.model = null;
     this.def = def;
     this.rig = new ArmorRig(def, this.particles);
     this.stage.root.add(this.rig.group);
+    this.loadModel(def);
     this.setSequence(steps);
     if (keepSuit && wasComplete) this.seq.complete();
     const self = this;
@@ -113,6 +120,20 @@ export class Experience {
       suitReady: () => this.suitReady,
       get aimAssist() { return self.aimAssist; },
     });
+  }
+
+  /** Use public/assets/models/<characterId>.glb (any rigged humanoid) instead of procedural armour when present. */
+  private async loadModel(def: CharacterDef) {
+    this.modelStatus = 'loading'; this.modelMissing = [];
+    const m = await ModelRig.load(def.modelUrl ?? `/assets/models/${def.id}.glb`, this.particles);
+    if (this.disposed || this.def !== def) { m?.dispose(); return; }
+    if (!m) { this.modelStatus = 'procedural'; return; }
+    this.model = m; this.modelMissing = m.missing;
+    m.setEnergyColor(def.palette.energy);
+    this.stage.root.add(m.root);
+    if (this.rig) this.rig.proceduralHidden = true;
+    this.modelStatus = 'model';
+    this.log(`Loaded 3D model for ${def.name}`);
   }
 
   setSequence(steps: SequenceStep[]) {
@@ -171,6 +192,10 @@ export class Experience {
     this.seq.tick(dt * 1000);
     if (prevState === 'running' && this.seq.state === 'complete') { this.log('Transformation complete'); this.opts.onTransformComplete?.(); }
     this.rig?.update(f && (f.simulated || this.tracker.status === 'tracking') ? f : null, this.seq.componentProgress(), this.effects, now / 1000, dt);
+    if (this.model) {
+      this.model.progress = this.seq.state === 'complete' ? 1 : this.seq.state === 'idle' ? 0 : this.seq.progress;
+      this.model.update(f && (f.simulated || this.tracker.status === 'tracking') ? f : null, this.tracker.settings.mirror, now / 1000);
+    }
     this.controller?.update(dt, f, now / 1000);
     this.world.update(dt);
     this.particles.update(dt);
@@ -221,6 +246,7 @@ export class Experience {
       powerStatus: this.suitReady ? (this.controller?.status() ?? '') : 'Suit offline — transform to unlock powers',
       events: [...this.events],
       recording: !!this.recorder, recordingMs: this.recorder ? now - this.recStart : 0,
+      model: { status: this.modelStatus, missing: this.modelMissing },
       targets: { total: this.world.targets.length, destroyed: this.world.targets.filter((t) => t.state === 'DESTROYED').length },
     };
   }
@@ -284,7 +310,7 @@ export class Experience {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     if (this.recorder) { try { this.recorder.stop(); } catch { /* ignore */ } this.recorder = null; }
-    this.controller?.dispose(); this.rig?.dispose(); this.world.dispose();
+    this.controller?.dispose(); this.rig?.dispose(); this.model?.dispose(); this.world.dispose();
     this.stage.dispose();
     if (this.acquired) { this.tracker.release(); this.acquired = false; }
     if (this.tracker.video.parentElement === this.container) this.tracker.video.remove();

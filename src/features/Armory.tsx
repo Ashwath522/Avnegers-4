@@ -35,7 +35,11 @@ export function Armory() {
       </div>
       <div className="stack">
         <Panel title={def.name} sub={def.tagline}>
-          <p className="small muted">Asset status: <span className="tag warn">procedural placeholder</span> — geometry is generated in code and attached to tracked joints. See docs/ASSET_MANIFEST.md to swap in rigged GLB models.</p>
+          <p className="small muted">
+            Body model: {snap?.model.status === 'model' ? <span className="tag ok">3D model loaded</span> : snap?.model.status === 'loading' ? <span className="tag info">checking…</span> : <span className="tag warn">procedural placeholder</span>}
+            {snap?.model.status !== 'model' && <> — drop a rigged humanoid at <code>public/assets/models/{def.id}.glb</code> to use it instead (see docs/ASSET_MANIFEST.md).</>}
+            {snap?.model.missing.length ? <span className="err"> Missing bones: {snap.model.missing.join(', ')}</span> : null}
+          </p>
           <h3>Armor components</h3>
           <div className="compgrid">
             {def.components.map((c) => {

@@ -22,6 +22,7 @@ export class Stage {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
+    this.renderer.localClippingEnabled = true; // used by the model materialize scan
     this.renderer.domElement.className = 'stage-canvas';
     container.appendChild(this.renderer.domElement);
 
