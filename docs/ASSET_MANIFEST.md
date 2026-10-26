@@ -15,6 +15,12 @@ No 3D model, texture, audio or animation files were supplied. Everything visible
 | tracking models | all | Google CDN or `public/models/` | MediaPipe `.task` | Apache-2.0 | pose + hands | — | — | external (run `npm run fetch-models` to vendor) |
 | audio | — | — | — | — | — | — | — | **missing** (no licensed SFX supplied; audio toggles intentionally omitted) |
 
+## Current Iron Man asset audit
+
+`public/assets/models/apex.fbx` is the supplied Mixamo **X Bot**. It is a generic skinned humanoid: the file contains the standard `mixamorig:*` skeleton and a generic material, but no Iron Man armor mesh, armor texture set, or separated armor components. It is therefore suitable as a tracking skeleton/body proxy, not as a premium finished armor asset. The current runtime attaches the original procedural Iron Man hard-surface kit to that skeleton and preserves any imported material maps when a future licensed armor asset supplies them.
+
+The repository does not contain a verified, redistributable Iron Man mesh or texture set. Adding a film-derived model would violate the asset policy, so no external replacement is claimed or bundled.
+
 ## Replacing a placeholder with a GLB
 Each suit component is created in `ArmorRig.build(id)` and returns a `place(frame)` function that positions it from
 joints. To swap in a model: load the GLB with `GLTFLoader`, split or name meshes per component id, and in `place()`

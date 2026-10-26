@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import type { BodyFrame, P3 } from '../tracking/types';
 import type { Particles } from './Particles';
 
@@ -159,6 +160,10 @@ export class ModelRig {
     this.root.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
+      const imported = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      // Preserve authored armor/texture materials from a future licensed GLB. The supplied
+      // X Bot has no maps, so it still receives the deep-red base below.
+      if (imported.some((m) => 'map' in m && !!(m as THREE.MeshStandardMaterial).map)) return;
       const m = red.clone();
       m.clippingPlanes = [this.clipPlane];
       m.metalness = 0.9; m.roughness = 0.35;
@@ -181,8 +186,10 @@ export class ModelRig {
       child.position.set(x, y, z);
       parent.add(child);
     };
-    const box = (w: number, h: number, d: number, mat: THREE.Material) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.castShadow = true; return m;
+    const box = (w: number, h: number, d: number, mat: THREE.Material, bevel = 0.12) => {
+      const radius = Math.min(w, h, d) * bevel;
+      const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, Math.max(radius, 1e-5)), mat);
+      m.castShadow = true; return m;
     };
     const sph = (r: number, mat: THREE.Material, ws = 24, hs = 16) => {
       const m = new THREE.Mesh(new THREE.SphereGeometry(r, ws, hs), mat); m.castShadow = true; return m;
