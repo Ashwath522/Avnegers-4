@@ -55,6 +55,7 @@ export class ArmorRig {
   private tendrils: Tube[] = [];
   private emitAcc = 0;
   coreGlow: THREE.Sprite | null = null;
+  private faceplatePivot: THREE.Group | null = null;
 
   constructor(readonly def: CharacterDef, private particles: Particles) {
     this.base = createSuitMaterials(def);
@@ -226,36 +227,45 @@ export class ArmorRig {
         };
       });
       case 'core': return this.add(id, ['lShoulder', 'rShoulder', 'lHip', 'rHip'], (g, m) => {
-        // Layered 3D arc-reactor assembly for Iron Man; simplified markers for others.
-        const housing = mesh(new THREE.CylinderGeometry(1, 1.05, 0.22, 48, 1, false), m.trim);
-        housing.rotation.x = Math.PI / 2;
-        const outerRing = mesh(new THREE.TorusGeometry(0.92, 0.07, 12, 48), m.trim);
-        const midRing = mesh(new THREE.TorusGeometry(0.68, 0.045, 10, 40), m.secondary);
-        const innerRing = mesh(new THREE.TorusGeometry(0.42, 0.035, 10, 32), m.trim);
-        const coreDisc = mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 32), m.energy);
-        coreDisc.rotation.x = Math.PI / 2;
-        const glass = mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.04, 48), new THREE.MeshPhysicalMaterial({
-          color: '#a8ecff', metalness: 0.1, roughness: 0.05, transmission: 0.55, transparent: true, opacity: 0.45, thickness: 0.4,
-        }));
-        glass.rotation.x = Math.PI / 2; glass.position.z = 0.12;
-        for (let i = 0; i < 8; i++) {
-          const spoke = mesh(UNIT_BOX, m.secondary);
-          const ang = (i / 8) * Math.PI * 2;
-          spoke.position.set(Math.cos(ang) * 0.55, Math.sin(ang) * 0.55, 0.02);
-          spoke.rotation.z = ang;
-          spoke.scale.set(0.28, 0.06, 0.04);
-          housing.add(spoke);
-        }
-        const glow = makeGlow(d.palette.energy, 14, s === 'metal' ? 0.95 : 0.4);
-        this.coreGlow = glow;
+        // Bright layered arc reactor — center MUST read cyan, not grey
         const assembly = new THREE.Group();
+        const brightCore = new THREE.MeshBasicMaterial({ color: '#7ff3ff', toneMapped: false });
+        const goldMat = m.trim;
+        const darkMat = m.secondary;
+
         if (s === 'metal') {
-          assembly.add(housing, outerRing, midRing, innerRing, coreDisc, glass, glow);
-          outerRing.position.z = 0.06; midRing.position.z = 0.08; innerRing.position.z = 0.1;
-          coreDisc.position.z = 0.05;
+          // Gold housing ring (flat cylinder facing camera)
+          const housing = mesh(new THREE.CylinderGeometry(1.05, 1.1, 0.18, 48), goldMat);
+          housing.rotation.x = Math.PI / 2;
+          // Concentric rings
+          const ringA = mesh(new THREE.TorusGeometry(0.88, 0.06, 10, 48), goldMat);
+          const ringB = mesh(new THREE.TorusGeometry(0.62, 0.04, 10, 40), darkMat);
+          const ringC = mesh(new THREE.TorusGeometry(0.4, 0.03, 8, 32), goldMat);
+          ringA.position.z = 0.08; ringB.position.z = 0.1; ringC.position.z = 0.12;
+          // Cyan core disc (large enough to dominate)
+          const coreDisc = mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.1, 32), brightCore);
+          coreDisc.rotation.x = Math.PI / 2;
+          coreDisc.position.z = 0.06;
+          // Spokes
+          for (let i = 0; i < 8; i++) {
+            const spoke = mesh(UNIT_BOX, darkMat);
+            const ang = (i / 8) * Math.PI * 2;
+            spoke.position.set(Math.cos(ang) * 0.55, Math.sin(ang) * 0.55, 0.05);
+            spoke.rotation.z = ang;
+            spoke.scale.set(0.3, 0.05, 0.04);
+            housing.add(spoke);
+          }
+          // Strong glow sprite in FRONT of everything
+          const glow = makeGlow('#5fe1ff', 18, 0.95);
+          glow.position.z = 0.35;
+          glow.scale.setScalar(2.2);
+          this.coreGlow = glow;
+          assembly.add(housing, ringA, ringB, ringC, coreDisc, glow);
         } else {
-          const disc = mesh(DISC, m.eyes); disc.rotation.x = Math.PI / 2;
-          disc.geometry = UNIT_BOX; disc.rotation.set(0, 0, Math.PI / 4);
+          const disc = mesh(DISC, m.eyes);
+          disc.rotation.x = Math.PI / 2;
+          const glow = makeGlow(d.palette.energy, 10, 0.5);
+          this.coreGlow = glow;
           assembly.add(disc, glow);
         }
         g.add(assembly);
@@ -263,14 +273,19 @@ export class ArmorRig {
           const j = f.joints;
           const sm = { x: (j.lShoulder.x + j.rShoulder.x) / 2, y: (j.lShoulder.y + j.rShoulder.y) / 2 };
           const hm = { x: (j.lHip.x + j.rHip.x) / 2, y: (j.lHip.y + j.rHip.y) / 2 };
-          const x = sm.x * 0.78 + hm.x * 0.22, y = sm.y * 0.78 + hm.y * 0.22, z = f.shoulderWidth * 0.52;
-          const r = f.shoulderWidth * (s === 'metal' ? 0.175 : 0.12);
+          // Mid-chest, slightly above geometric center (Mark reference)
+          const x = sm.x * 0.72 + hm.x * 0.28;
+          const y = sm.y * 0.72 + hm.y * 0.28;
+          const z = f.shoulderWidth * 0.55;
+          const r = f.shoulderWidth * (s === 'metal' ? 0.19 : 0.12);
           assembly.position.set(x, y, z);
-          assembly.scale.setScalar(r);
-          const pulse = 1 + 0.06 * Math.sin(t * 3.2);
-          if (s === 'metal') coreDisc.scale.set(pulse, pulse, 1);
-          glow.position.set(x, y, z + r * 0.4);
-          glow.scale.setScalar(r * 5.2 * pulse);
+          const pulse = 1 + 0.07 * Math.sin(t * 3.5);
+          assembly.scale.set(r * pulse, r * pulse, r);
+          if (this.coreGlow) {
+            this.coreGlow.position.set(x, y, z + r * 0.5);
+            this.coreGlow.scale.setScalar(r * 5.5 * pulse);
+            this.coreGlow.material.opacity = 0.8 + 0.2 * Math.sin(t * 3.5);
+          }
           return { x, y, z, v: 1 };
         };
       });
@@ -361,34 +376,49 @@ export class ArmorRig {
         const skull = mesh(UNIT_SPHERE, m.primary); skull.scale.set(1, 1.18, 1.05); head.add(skull);
         const glows: THREE.Sprite[] = [];
         if (d.headStyle === 'helmet') {
-          // Iron Man: sculpted helmet — crown, cheeks, gold faceplate, eye slits, chin
-          skull.scale.set(1.02, 1.12, 1.08);
+          // Red shell
+          skull.scale.set(1.0, 1.1, 1.02);
           const crown = mesh(UNIT_DOME, m.primary);
-          crown.scale.set(1.08, 0.72, 1.05); crown.position.set(0, 0.38, -0.05); head.add(crown);
+          crown.scale.set(1.1, 0.7, 1.05); crown.position.set(0, 0.4, -0.05); head.add(crown);
           for (const sx of [-1, 1]) {
             const cheek = mesh(UNIT_SPHERE, m.primary);
-            cheek.scale.set(0.38, 0.55, 0.48); cheek.position.set(sx * 0.72, -0.12, 0.15); head.add(cheek);
-            const temple = mesh(UNIT_BOX, m.trim);
-            temple.scale.set(0.12, 0.28, 0.35); temple.position.set(sx * 0.85, 0.18, 0.25); temple.rotation.z = sx * -0.25; head.add(temple);
-          }
-          const face = mesh(UNIT_SPHERE, m.trim);
-          face.scale.set(0.78, 0.88, 0.55); face.position.set(0, -0.06, 0.55); head.add(face);
-          const brow = mesh(UNIT_BOX, m.primary);
-          brow.position.set(0, 0.22, 0.95); brow.scale.set(0.95, 0.12, 0.22); head.add(brow);
-          for (const sx of [-1, 1]) {
-            const socket = mesh(UNIT_BOX, m.secondary);
-            socket.position.set(sx * 0.28, 0.06, 1.02); socket.scale.set(0.32, 0.12, 0.08); socket.rotation.z = sx * -0.15; head.add(socket);
-            const eye = mesh(UNIT_BOX, m.eyes);
-            eye.position.set(sx * 0.28, 0.06, 1.08); eye.scale.set(0.26, 0.055, 0.04); eye.rotation.z = sx * -0.15; head.add(eye);
-            const gl = makeGlow(d.palette.energy, 1.2, 0.9); gl.position.set(sx * 0.28, 0.06, 1.18); gl.scale.setScalar(0.55); head.add(gl); glows.push(gl);
+            cheek.scale.set(0.4, 0.55, 0.48); cheek.position.set(sx * 0.72, -0.1, 0.12); head.add(cheek);
           }
           const jaw = mesh(UNIT_BOX, m.primary);
-          jaw.position.set(0, -0.58, 0.42); jaw.scale.set(0.72, 0.28, 0.55); head.add(jaw);
+          jaw.position.set(0, -0.58, 0.4); jaw.scale.set(0.7, 0.28, 0.55); head.add(jaw);
           const chin = mesh(UNIT_BOX, m.trim);
-          chin.position.set(0, -0.72, 0.55); chin.scale.set(0.38, 0.14, 0.28); head.add(chin);
-          const mouth = mesh(UNIT_BOX, m.secondary);
-          mouth.position.set(0, -0.42, 1.0); mouth.scale.set(0.32, 0.04, 0.05); head.add(mouth);
-        } else if (d.headStyle === 'mask') {
+          chin.position.set(0, -0.72, 0.52); chin.scale.set(0.35, 0.14, 0.28); head.add(chin);
+
+          // FACEPLATE — hinged at brow, animates closed during helmet step
+          const pivot = new THREE.Group();
+          pivot.position.set(0, 0.22, 0.35); // brow hinge
+          const plate = new THREE.Group();
+          plate.position.set(0, -0.28, 0.25); // hangs down over face when closed
+          const face = mesh(UNIT_SPHERE, m.trim);
+          face.scale.set(0.78, 0.88, 0.5); face.position.set(0, 0, 0);
+          plate.add(face);
+          const brow = mesh(UNIT_BOX, m.primary);
+          brow.position.set(0, 0.28, 0.35); brow.scale.set(0.9, 0.1, 0.2); plate.add(brow);
+          for (const sx of [-1, 1]) {
+            const socket = mesh(UNIT_BOX, m.secondary);
+            socket.position.set(sx * 0.28, 0.08, 0.48); socket.scale.set(0.3, 0.1, 0.06);
+            socket.rotation.z = sx * -0.15; plate.add(socket);
+            const eye = mesh(UNIT_BOX, m.eyes);
+            eye.position.set(sx * 0.28, 0.08, 0.52); eye.scale.set(0.24, 0.05, 0.04);
+            eye.rotation.z = sx * -0.15; plate.add(eye);
+            const gl = makeGlow(d.palette.energy, 1.2, 0.9);
+            gl.position.set(sx * 0.28, 0.08, 0.6); gl.scale.setScalar(0.5); plate.add(gl); glows.push(gl);
+          }
+          for (let i = -1; i <= 1; i++) {
+            const vent = mesh(UNIT_BOX, m.secondary);
+            vent.position.set(i * 0.12, -0.35, 0.45); vent.scale.set(0.08, 0.12, 0.04); plate.add(vent);
+          }
+          pivot.add(plate);
+          head.add(pivot);
+          this.faceplatePivot = pivot;
+          // default sealed
+          pivot.rotation.x = 0;
+                } else if (d.headStyle === 'mask') {
           // Spider-Man: full mask with large white eye lenses + web ridges
           skull.scale.set(1.02, 1.08, 1.05);
           const lensShape = new THREE.Shape();
@@ -524,7 +554,14 @@ export class ArmorRig {
         if (sm.emissive && this.def.surface !== 'organic') { sm.emissive.set(this.def.palette.energy); sm.emissiveIntensity = (sm.userData.baseEmissive ?? 0) + flash * 0.9; }
       }
     }
-    // palm emitters
+    // Faceplate close animation: open while head materializes, seal when head progress → 1
+    if (this.faceplatePivot && this.def.headStyle === 'helmet') {
+      const hp = progress.get('head') ?? 1;
+      // 0..0.35 open, 0.35..1 close
+      const closed = hp <= 0.35 ? 0 : Math.min(1, (hp - 0.35) / 0.65);
+      this.faceplatePivot.rotation.x = -(1 - closed) * Math.PI * 0.7;
+    }
+        // palm emitters
     for (const side of ['left', 'right'] as Side[]) {
       const e = this.emitters[side];
       const h = f.hands[side];

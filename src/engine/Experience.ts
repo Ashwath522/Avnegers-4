@@ -137,12 +137,13 @@ export class Experience {
     if (!m) { this.modelStatus = 'procedural'; return; }
     this.model = m; this.modelMissing = m.missing;
     m.setEnergyColor(def.palette.energy);
-    // Recolor Mixamo / generic mesh to this character (Iron Man red-gold, etc.)
-    m.applyPalette(def.palette, def.surface);
+    if (def.id === 'apex' || def.surface === 'metal') {
+      m.applyIronManKit(def.palette);
+    }
     this.stage.root.add(m.root);
     if (this.rig) this.rig.proceduralHidden = true;
     this.modelStatus = 'model';
-    this.log(`Loaded 3D model for ${def.name} (${def.palette.primary})`);
+    this.log(`Iron Man kit on ${def.name}`);
   }
 
   setSequence(steps: SequenceStep[]) {

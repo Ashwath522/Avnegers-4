@@ -49,7 +49,6 @@ export function resolveBones(names: string[]): Partial<Record<Slot, string>> {
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _wq = new THREE.Quaternion();
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
-function hash(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
 
 export class ModelRig {
   readonly root = new THREE.Group();
@@ -60,8 +59,17 @@ export class ModelRig {
   private clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6);
   private scanLine: THREE.Mesh;
   private mats: THREE.Material[] = [];
+  private faceplatePivot: THREE.Group | null = null;
+  private faceplateClosed = 1;
+  private reactorGlow: THREE.Sprite | null = null;
   missing: Slot[] = [];
   progress = 1;
+
+  /** 0 = open (raised about 110 degrees at the brow hinge), 1 = sealed. */
+  private setFaceplateClosed(closed: number) {
+    this.faceplateClosed = THREE.MathUtils.clamp(closed, 0, 1);
+    if (this.faceplatePivot) this.faceplatePivot.rotation.x = -(1 - this.faceplateClosed) * THREE.MathUtils.degToRad(110);
+  }
 
   private constructor(model: THREE.Object3D, private particles: Particles) {
     this.root.add(model);
@@ -131,122 +139,347 @@ export class ModelRig {
   setEnergyColor(c: string) { (this.scanLine.material as THREE.MeshBasicMaterial).color.set(c); }
 
   /**
-   * Paint the loaded mesh with character palette so Mixamo X Bot reads as Iron Man / hero suit.
-   * Primary = armor body, trim = gold accents, energy = glowing core/eyes.
+   * Mark III–style Iron Man armor on Mixamo skeleton.
+   * CRITICAL: plate sizes use inverse world-scale of each bone so they stay
+   * human-sized whether the FBX was in cm or meters.
    */
-  applyPalette(palette: { primary: string; secondary: string; trim: string; energy: string; eyes: string }, style: 'metal' | 'suit' | 'skin' | 'organic' = 'metal') {
-    const primary = new THREE.MeshPhysicalMaterial({
-      color: palette.primary,
-      metalness: style === 'metal' ? 0.92 : style === 'organic' ? 0.25 : 0.15,
-      roughness: style === 'metal' ? 0.28 : style === 'organic' ? 0.15 : 0.45,
-      clearcoat: style === 'metal' || style === 'organic' ? 0.9 : 0.2,
-      clearcoatRoughness: 0.12,
-      envMapIntensity: 1.8,
+  applyIronManKit(palette: { primary: string; secondary: string; trim: string; energy: string; eyes: string }) {
+    const red = new THREE.MeshPhysicalMaterial({
+      color: palette.primary, metalness: 0.95, roughness: 0.2, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 2.5,
     });
-    const trim = new THREE.MeshPhysicalMaterial({
-      color: palette.trim,
-      metalness: 1,
-      roughness: 0.15,
-      clearcoat: 0.85,
-      envMapIntensity: 2.0,
+    const gold = new THREE.MeshPhysicalMaterial({
+      color: palette.trim, metalness: 1, roughness: 0.1, clearcoat: 0.95, clearcoatRoughness: 0.05, envMapIntensity: 2.8,
     });
-    const secondary = new THREE.MeshStandardMaterial({
-      color: palette.secondary,
-      metalness: style === 'metal' ? 0.9 : 0.2,
-      roughness: 0.35,
-    });
-    const energy = new THREE.MeshBasicMaterial({ color: palette.energy, toneMapped: false });
-    const eyes = new THREE.MeshBasicMaterial({ color: palette.eyes, toneMapped: false });
-    this.mats.push(primary, trim, secondary, energy, eyes);
+    const dark = new THREE.MeshStandardMaterial({ color: '#2a2d33', metalness: 0.9, roughness: 0.4 });
+    const energyMat = new THREE.MeshBasicMaterial({ color: palette.energy, toneMapped: false });
+    const eyeMat = new THREE.MeshBasicMaterial({ color: palette.eyes, toneMapped: false });
+    this.mats.push(red, gold, dark, energyMat, eyeMat);
 
-    // Collect meshes and assign by height bands (feet→head) + name hints
-    const meshes: THREE.Mesh[] = [];
+    // Paint base mesh deep red metal (not black) so body never looks empty
     this.root.traverse((o) => {
       const mesh = o as THREE.Mesh;
-      if (mesh.isMesh) meshes.push(mesh);
-    });
-    if (!meshes.length) return;
-
-    const worldBox = new THREE.Box3().setFromObject(this.root);
-    const minY = worldBox.min.y;
-    const spanY = Math.max(1e-3, worldBox.max.y - worldBox.min.y);
-
-    for (const mesh of meshes) {
-      const mb = new THREE.Box3().setFromObject(mesh);
-      const cy = (mb.min.y + mb.max.y) * 0.5;
-      const t = (cy - minY) / spanY; // 0 feet → 1 head
-      const name = (mesh.name || mesh.parent?.name || '').toLowerCase();
-
-      let mat: THREE.Material = primary;
-      // Head / face / eyes
-      if (/head|face|eye|helmet|skull|visor/.test(name) || t > 0.88) {
-        mat = /eye|visor|lens/.test(name) ? eyes : primary;
-      } else if (/hand|finger|glove|wrist/.test(name)) {
-        mat = primary;
-      } else if (/boot|foot|shoe|toe/.test(name) || t < 0.12) {
-        mat = trim; // gold boots
-      } else if (/shoulder|clavicle|arm|forearm|elbow|leg|thigh|calf|knee|shin|spine|chest|torso|pelvis|hip|body|mesh/.test(name)) {
-        // alternate some panels to gold for armor plate read
-        const useGold = /shoulder|knee|elbow|belt|collar|pelvis/.test(name) || (Math.abs(hash(name)) % 5 === 0);
-        mat = useGold ? trim : primary;
-      } else {
-        mat = t > 0.75 ? primary : t < 0.15 ? trim : primary;
-      }
-
-      // Keep clipping plane from constructor
-      const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const clip = list[0] && (list[0] as THREE.Material).clippingPlanes;
-      const applied = mat.clone();
-      if (clip) {
-        applied.clippingPlanes = clip;
-        applied.clipShadows = true;
-      }
-      this.mats.push(applied);
-      mesh.material = applied;
+      if (!mesh.isMesh) return;
+      const m = red.clone();
+      m.clippingPlanes = [this.clipPlane];
+      m.metalness = 0.9; m.roughness = 0.35;
+      mesh.material = m;
       mesh.castShadow = true;
-      mesh.receiveShadow = true;
+    });
+
+    this.root.updateMatrixWorld(true);
+    const _ws = new THREE.Vector3();
+    /** Local size so that `meters` becomes that many metres in world space under this bone. */
+    const U = (bone: THREE.Object3D | undefined, meters: number) => {
+      if (!bone) return meters;
+      bone.getWorldScale(_ws);
+      const s = Math.max(_ws.x, _ws.y, _ws.z, 1e-6);
+      return meters / s;
+    };
+    const B = (s: Slot) => this.bones[s];
+    const attach = (parent: THREE.Object3D | undefined, child: THREE.Object3D, x = 0, y = 0, z = 0) => {
+      if (!parent) return;
+      child.position.set(x, y, z);
+      parent.add(child);
+    };
+    const box = (w: number, h: number, d: number, mat: THREE.Material) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.castShadow = true; return m;
+    };
+    const sph = (r: number, mat: THREE.Material, ws = 24, hs = 16) => {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, ws, hs), mat); m.castShadow = true; return m;
+    };
+    const cyl = (a: number, b: number, h: number, mat: THREE.Material, seg = 18) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(a, b, h, seg), mat); m.castShadow = true; return m;
+    };
+    const dome = (r: number, mat: THREE.Material) => {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.55), mat);
+      m.castShadow = true; return m;
+    };
+
+    // ---- HELMET (Mark-style) with animating faceplate ----
+    {
+      const head = B('head');
+      if (head) {
+        const u = (m: number) => U(head, m);
+        const H = new THREE.Group(); H.name = '__mkHelmet';
+        // Red outer shell (rear + top always visible)
+        const shell = sph(u(0.12), red, 28, 20);
+        shell.scale.set(1.05, 1.15, 1.0);
+        H.add(shell);
+        const crown = dome(u(0.125), red);
+        crown.scale.set(1.1, 0.65, 1.0);
+        crown.position.y = u(0.05);
+        H.add(crown);
+        // Cheeks / jaw base (stay fixed)
+        for (const sx of [-1, 1] as const) {
+          const cheek = box(u(0.05), u(0.11), u(0.09), red);
+          cheek.position.set(sx * u(0.11), u(-0.02), u(0.03));
+          H.add(cheek);
+        }
+        const jaw = box(u(0.14), u(0.055), u(0.1), red);
+        jaw.position.set(0, u(-0.09), u(0.05));
+        H.add(jaw);
+        const chin = box(u(0.06), u(0.035), u(0.055), gold);
+        chin.position.set(0, u(-0.12), u(0.07));
+        H.add(chin);
+
+        // FACEPLATE PIVOT — rotates open/closed around brow hinge (classic Iron Man)
+        const pivot = new THREE.Group();
+        pivot.name = '__mkFaceplate';
+        // hinge near brow
+        pivot.position.set(0, u(0.05), u(0.05));
+        const faceRoot = new THREE.Group();
+        faceRoot.position.set(0, u(-0.05), u(0.05)); // offset so plate covers face when closed
+        // Gold faceplate
+        const face = box(u(0.15), u(0.17), u(0.04), gold);
+        face.position.set(0, 0, u(0.06));
+        faceRoot.add(face);
+        const faceTop = sph(u(0.08), gold, 16, 12);
+        faceTop.scale.set(0.95, 0.65, 0.4);
+        faceTop.position.set(0, u(0.05), u(0.04));
+        faceRoot.add(faceTop);
+        // Brow on plate
+        const brow = box(u(0.16), u(0.025), u(0.04), red);
+        brow.position.set(0, u(0.06), u(0.075));
+        faceRoot.add(brow);
+        // Narrow eye slits (not huge white blocks)
+        for (const sx of [-1, 1] as const) {
+          const socket = box(u(0.05), u(0.018), u(0.012), dark);
+          socket.position.set(sx * u(0.04), u(0.02), u(0.08));
+          socket.rotation.z = sx * -0.15;
+          faceRoot.add(socket);
+          const eye = box(u(0.042), u(0.01), u(0.008), eyeMat);
+          eye.position.set(sx * u(0.04), u(0.02), u(0.086));
+          eye.rotation.z = sx * -0.15;
+          faceRoot.add(eye);
+        }
+        // Mouth vents
+        for (let i = -1; i <= 1; i++) {
+          const v = box(u(0.016), u(0.03), u(0.01), dark);
+          v.position.set(i * u(0.025), u(-0.05), u(0.08));
+          faceRoot.add(v);
+        }
+        pivot.add(faceRoot);
+        H.add(pivot);
+        this.faceplatePivot = pivot;
+        // Start closed if suit already complete; open if materializing
+        this.setFaceplateClosed(this.faceplateClosed);
+
+        attach(head, H, 0, U(head, 0.06), 0);
+      }
     }
 
-    // Attach a simple arc-reactor glow on the chest (hips→shoulders midpoint)
-    this.attachReactorGlow(palette.energy);
+    // ---- CHEST + REACTOR ----
+    {
+      const chest = B('chest') || B('spine') || B('hips');
+      if (chest) {
+        const u = (m: number) => U(chest, m);
+        const T = new THREE.Group(); T.name = '__mkTorso';
+        for (const sx of [-1, 1] as const) {
+          const pec = box(u(0.12), u(0.11), u(0.07), red);
+          pec.position.set(sx * u(0.09), u(0.1), u(0.12));
+          pec.rotation.z = sx * -0.1;
+          T.add(pec);
+          const gt = box(u(0.09), u(0.025), u(0.035), gold);
+          gt.position.set(sx * u(0.085), u(0.04), u(0.14));
+          T.add(gt);
+        }
+        for (let row = 0; row < 3; row++) {
+          for (const sx of [-1, 1] as const) {
+            const ab = box(u(0.08), u(0.05), u(0.05), red);
+            ab.position.set(sx * u(0.07), u(-0.02 - row * 0.06), u(0.12));
+            T.add(ab);
+          }
+        }
+        const sternum = box(u(0.03), u(0.24), u(0.03), gold);
+        sternum.position.set(0, u(0.03), u(0.145));
+        T.add(sternum);
+        const collar = box(u(0.26), u(0.04), u(0.11), gold);
+        collar.position.set(0, u(0.2), u(0.06));
+        T.add(collar);
+        for (const sx of [-1, 1] as const) {
+          const side = box(u(0.04), u(0.24), u(0.1), red);
+          side.position.set(sx * u(0.16), u(0.02), u(0.06));
+          T.add(side);
+        }
+        const back = box(u(0.24), u(0.3), u(0.05), red);
+        back.position.set(0, u(0.04), u(-0.12));
+        T.add(back);
+
+        // Arc reactor — center of chest, controlled glow (not face-sized)
+        const R = new THREE.Group();
+        R.name = '__mkReactor';
+        const house = cyl(u(0.055), u(0.06), u(0.025), gold, 40);
+        house.rotation.x = Math.PI / 2;
+        R.add(house);
+        for (const [rad, tube, mat] of [[0.05, 0.006, gold], [0.036, 0.004, dark], [0.024, 0.003, gold]] as const) {
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(u(rad), u(tube), 10, 36), mat);
+          ring.position.z = u(0.012);
+          R.add(ring);
+        }
+        for (let i = 0; i < 8; i++) {
+          const spoke = box(u(0.03), u(0.006), u(0.004), dark);
+          const a = (i / 8) * Math.PI * 2;
+          spoke.position.set(Math.cos(a) * u(0.03), Math.sin(a) * u(0.03), u(0.012));
+          spoke.rotation.z = a;
+          R.add(spoke);
+        }
+        const core = new THREE.Mesh(new THREE.CircleGeometry(u(0.02), 28), energyMat);
+        core.position.z = u(0.016);
+        R.add(core);
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+          color: palette.energy, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending,
+        }));
+        // Small glow — previous version washed out the whole torso/face
+        glow.scale.setScalar(u(0.12));
+        glow.position.z = u(0.04);
+        R.add(glow);
+        this.reactorGlow = glow;
+        // Place on sternum / mid-chest (Mark III reference)
+        R.position.set(0, u(0.06), u(0.15));
+        T.add(R);
+
+
+
+        attach(chest, T, 0, U(chest, 0.02), 0);
+      }
+    }
+
+    // ---- PAULDRONS ----
+    for (const side of ['l', 'r'] as const) {
+      const arm = B(side === 'l' ? 'lUpperArm' : 'rUpperArm');
+      if (!arm) continue;
+      const u = (m: number) => U(arm, m);
+      const P = new THREE.Group();
+      const main = dome(u(0.11), red);
+      main.scale.set(1.25, 0.95, 1.2);
+      main.rotation.z = side === 'l' ? 0.45 : -0.45;
+      main.rotation.x = 0.15;
+      P.add(main);
+      const rim = cyl(u(0.11), u(0.11), u(0.025), gold, 20);
+      rim.position.y = u(-0.03);
+      P.add(rim);
+      const layer = dome(u(0.1), gold);
+      layer.scale.set(1.1, 0.6, 1.0);
+      layer.position.y = u(-0.04);
+      layer.rotation.z = side === 'l' ? 0.45 : -0.45;
+      P.add(layer);
+      attach(arm, P, side === 'l' ? U(arm, -0.03) : U(arm, 0.03), U(arm, 0.1), U(arm, 0.02));
+    }
+
+    // ---- UPPER ARMS / FOREARMS / HANDS ----
+    for (const side of ['l', 'r'] as const) {
+      const up = B(side === 'l' ? 'lUpperArm' : 'rUpperArm');
+      const fo = B(side === 'l' ? 'lForearm' : 'rForearm');
+      const hd = B(side === 'l' ? 'lHand' : 'rHand');
+      if (up) {
+        const u = (m: number) => U(up, m);
+        const G = new THREE.Group();
+        G.add(cyl(u(0.06), u(0.055), u(0.22), red, 16));
+        G.children[0].position.y = u(0.12);
+        for (const y of [0.05, 0.15, 0.22]) {
+          const band = cyl(u(0.063), u(0.063), u(0.02), gold, 16);
+          band.position.y = u(y);
+          G.add(band);
+        }
+        attach(up, G, 0, 0, 0);
+      }
+      if (fo) {
+        const u = (m: number) => U(fo, m);
+        const G = new THREE.Group();
+        const plate = cyl(u(0.05), u(0.045), u(0.22), red, 16);
+        plate.position.y = u(0.11);
+        G.add(plate);
+        const ridge = box(u(0.035), u(0.18), u(0.025), gold);
+        ridge.position.set(0, u(0.11), u(0.045));
+        G.add(ridge);
+        const cuff = cyl(u(0.052), u(0.052), u(0.03), gold, 16);
+        cuff.position.y = 0;
+        G.add(cuff);
+        attach(fo, G, 0, 0, 0);
+      }
+      if (hd) {
+        const u = (m: number) => U(hd, m);
+        const G = new THREE.Group();
+        G.add(box(u(0.08), u(0.1), u(0.04), red));
+        G.children[0].position.set(0, u(0.05), u(0.015));
+        const kn = box(u(0.085), u(0.025), u(0.035), gold);
+        kn.position.set(0, u(0.1), u(0.02));
+        G.add(kn);
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(u(0.025), 20), energyMat);
+        disc.position.set(0, u(0.05), u(0.04));
+        G.add(disc);
+        const g = new THREE.Sprite(new THREE.SpriteMaterial({
+          color: palette.energy, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending,
+        }));
+        g.scale.setScalar(u(0.1));
+        g.position.set(0, u(0.05), u(0.06));
+        G.add(g);
+        attach(hd, G, 0, 0, 0);
+      }
+    }
+
+    // ---- LEGS ----
+    for (const side of ['l', 'r'] as const) {
+      const th = B(side === 'l' ? 'lThigh' : 'rThigh');
+      const sh = B(side === 'l' ? 'lShin' : 'rShin');
+      const ft = B(side === 'l' ? 'lFoot' : 'rFoot');
+      if (th) {
+        const u = (m: number) => U(th, m);
+        const G = new THREE.Group();
+        const plate = cyl(u(0.08), u(0.07), u(0.3), red, 16);
+        plate.position.y = u(0.15);
+        G.add(plate);
+        const ridge = box(u(0.045), u(0.24), u(0.035), gold);
+        ridge.position.set(0, u(0.15), u(0.065));
+        G.add(ridge);
+        attach(th, G, 0, 0, 0);
+      }
+      if (sh) {
+        const u = (m: number) => U(sh, m);
+        const G = new THREE.Group();
+        const plate = cyl(u(0.065), u(0.055), u(0.28), red, 16);
+        plate.position.y = u(0.14);
+        G.add(plate);
+        const knee = sph(u(0.06), gold, 14, 12);
+        G.add(knee);
+        const ridge = box(u(0.035), u(0.2), u(0.03), gold);
+        ridge.position.set(0, u(0.14), u(0.055));
+        G.add(ridge);
+        attach(sh, G, 0, 0, 0);
+      }
+      if (ft) {
+        const u = (m: number) => U(ft, m);
+        const G = new THREE.Group();
+        const boot = box(u(0.1), u(0.08), u(0.18), red);
+        boot.position.set(0, u(0.03), u(0.06));
+        G.add(boot);
+        const toe = box(u(0.09), u(0.05), u(0.07), gold);
+        toe.position.set(0, u(0.025), u(0.16));
+        G.add(toe);
+        attach(ft, G, 0, 0, 0);
+      }
+    }
+
+    // ---- BELT ----
+    {
+      const hips = B('hips');
+      if (hips) {
+        const u = (m: number) => U(hips, m);
+        const G = new THREE.Group();
+        const belt = cyl(u(0.16), u(0.16), u(0.05), gold, 24);
+        belt.position.y = u(0.06);
+        G.add(belt);
+        const buckle = box(u(0.06), u(0.05), u(0.04), red);
+        buckle.position.set(0, u(0.06), u(0.16));
+        G.add(buckle);
+        attach(hips, G, 0, 0, 0);
+      }
+    }
+
+    const mapped = Object.keys(this.bones).length;
+    console.info(`[model] Iron Man kit attached (${mapped} bones mapped). missing=${this.missing.join(',') || 'none'}`);
   }
 
-  private attachReactorGlow(energyColor: string) {
-    const chest = this.bones.chest || this.bones.spine || this.bones.hips;
-    if (!chest) return;
-    // Remove old if any
-    const old = this.root.getObjectByName('__arcReactor');
-    if (old) old.removeFromParent();
-
-    const group = new THREE.Group();
-    group.name = '__arcReactor';
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.06, 0.012, 12, 32),
-      new THREE.MeshPhysicalMaterial({ color: '#d9a441', metalness: 1, roughness: 0.2 }),
-    );
-    const core = new THREE.Mesh(
-      new THREE.CircleGeometry(0.045, 32),
-      new THREE.MeshBasicMaterial({ color: energyColor, toneMapped: false }),
-    );
-    core.position.z = 0.01;
-    const glowMat = new THREE.SpriteMaterial({
-      color: energyColor,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const glow = new THREE.Sprite(glowMat);
-    glow.scale.setScalar(0.25);
-    glow.position.z = 0.05;
-    group.add(ring, core, glow);
-    // Offset forward from chest bone
-    group.position.set(0, 0.12, 0.12);
-    chest.add(group);
-    this.mats.push(ring.material as THREE.Material, core.material as THREE.Material, glowMat);
-  }
-
-  /** Rotate `bone` (world space) so its rest direction toward `child` points along `desired`. */
   private aim(bone: THREE.Object3D | undefined, child: THREE.Object3D | undefined, from: P3, to: P3, scale: number) {
     if (!bone || !child || !bone.parent) return;
     bone.getWorldPosition(_a); child.getWorldPosition(_b);
@@ -272,6 +505,15 @@ export class ModelRig {
     if (!f || !f.hasPose || f.shoulderWidth < 8) { this.root.visible = false; return; }
     this.root.visible = this.progress > 0.001;
     if (!this.root.visible) return;
+    // Faceplate seals during the final quarter of the suit-up scan (Iron Man helmet close)
+    if (this.faceplatePivot) {
+      const seal = this.progress <= 0.72 ? 0 : Math.min(1, (this.progress - 0.72) / 0.28);
+      this.setFaceplateClosed(this.progress >= 1 ? 1 : seal);
+    }
+    if (this.reactorGlow) {
+      const pulse = 0.7 + 0.25 * Math.sin(t * 3.5);
+      this.reactorGlow.material.opacity = pulse;
+    }
     for (const [b, q] of this.rest) b.quaternion.copy(q);
     const j = f.joints;
     const shMid = { x: (j.lShoulder.x + j.rShoulder.x) / 2, y: (j.lShoulder.y + j.rShoulder.y) / 2, z: (j.lShoulder.z + j.rShoulder.z) / 2, v: 1 };
