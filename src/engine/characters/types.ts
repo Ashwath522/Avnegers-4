@@ -60,4 +60,6 @@ export interface CharacterDef {
   powers: PowerDef[];
   sequence: SequenceStep[];
   assetStatus: 'procedural-placeholder' | 'model';
+  /** Optional override path for a rigged GLB (defaults to /assets/models/<id>.glb). */
+  modelUrl?: string;
 }

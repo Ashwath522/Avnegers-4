@@ -1,3 +1,25 @@
+# Project Status — 2026-10-26 (armor upgrade + character names)
+
+## Changes in this package
+- Display names: **Iron Man**, **Spider-Man**, **Hulk**, **Venom** (internal ids still apex/webrunner/titan/symbiont).
+- **Iron Man**: layered 3D arc reactor, sculpted helmet, pectoral/abs plates, gold trim.
+- **Spider-Man**: full mask with large eye lenses + web ridges, chest emblem + web lines.
+- **Hulk**: heavy brow/jaw, muscle pecs/abs/traps.
+- **Venom**: oversized white eyes, jagged mouth, white spider-chest mark, organic mass.
+- ModelRig tests + optional `modelUrl` + `proceduralHidden` for future GLB swaps.
+
+## Apply this package
+1. Unzip over your project (or copy the files listed in APPLY.md).
+2. `npm install && npm test && npm run dev`
+3. Open Armory / Live and switch characters.
+
+## Remaining limitations
+- Still procedural geometry (not film-scanned meshes). No copyrighted GLBs bundled.
+- No person-segmentation occlusion yet.
+- Real webcam still needs calibration on your machine.
+
+---
+
 # Project Status — 2026-10-25 (checkpoint 1)
 
 ## Baseline audit

@@ -46,6 +46,8 @@ interface Comp {
 
 export class ArmorRig {
   readonly group = new THREE.Group();
+  /** When true, procedural body plates stay hidden (GLB model is driving the silhouette). Palm emitters still update. */
+  proceduralHidden = false;
   private comps = new Map<ComponentId, Comp>();
   private base: SuitMaterials;
   private emitters: Record<Side, THREE.Sprite>;
@@ -139,17 +141,77 @@ export class ArmorRig {
         g.add(torso);
         const details: THREE.Mesh[] = [];
         if (s === 'metal') {
-          for (let i = 0; i < 6; i++) {
-            const plate = mesh(UNIT_BOX, m.secondary);
-            plate.position.set((i % 2 ? 0.1 : -0.1), -0.05 - Math.floor(i / 2) * 0.14, 0.4);
-            plate.scale.set(0.17, 0.11, 0.1);
-            torso.add(plate); details.push(plate);
+          // Iron Man: layered pectoral + abdominal plates with gold trim
+          for (const sx of [-1, 1]) {
+            const pec = mesh(UNIT_BOX, m.primary);
+            pec.position.set(sx * 0.22, 0.22, 0.42); pec.scale.set(0.28, 0.22, 0.14); pec.rotation.z = sx * -0.08; torso.add(pec); details.push(pec);
+            const pecGold = mesh(UNIT_BOX, m.trim);
+            pecGold.position.set(sx * 0.22, 0.12, 0.48); pecGold.scale.set(0.18, 0.06, 0.06); torso.add(pecGold);
           }
-          const collar = mesh(UNIT_BOX, m.trim); collar.position.set(0, 0.47, 0.25); collar.scale.set(0.7, 0.06, 0.25); torso.add(collar);
+          const sternum = mesh(UNIT_BOX, m.trim);
+          sternum.position.set(0, 0.05, 0.5); sternum.scale.set(0.1, 0.55, 0.08); torso.add(sternum);
+          for (let i = 0; i < 3; i++) {
+            for (const sx of [-1, 1]) {
+              const plate = mesh(UNIT_BOX, m.primary);
+              plate.position.set(sx * 0.16, -0.12 - i * 0.14, 0.4);
+              plate.scale.set(0.2, 0.1, 0.1);
+              torso.add(plate); details.push(plate);
+            }
+          }
+          for (const sx of [-1, 1]) {
+            const side = mesh(UNIT_BOX, m.secondary);
+            side.position.set(sx * 0.42, 0.0, 0.15); side.scale.set(0.12, 0.7, 0.35); torso.add(side);
+          }
+          const collar = mesh(UNIT_BOX, m.trim); collar.position.set(0, 0.48, 0.28); collar.scale.set(0.75, 0.07, 0.28); torso.add(collar);
+          for (const sx of [-1, 1]) {
+            const fl = mesh(UNIT_BOX, m.trim);
+            fl.position.set(sx * 0.38, 0.42, 0.15); fl.scale.set(0.14, 0.08, 0.22); fl.rotation.z = sx * 0.35; torso.add(fl);
+          }
         } else if (s === 'skin') {
-          for (const side of [-1, 1]) { const pec = mesh(UNIT_SPHERE, m.primary); pec.position.set(side * 0.18, 0.22, 0.28); pec.scale.set(0.22, 0.14, 0.14); torso.add(pec); }
+          // Hulk: heavy pectorals, abs, traps
+          for (const sx of [-1, 1]) {
+            const pec = mesh(UNIT_SPHERE, m.primary); pec.position.set(sx * 0.2, 0.24, 0.32); pec.scale.set(0.26, 0.18, 0.18); torso.add(pec);
+            const trap = mesh(UNIT_SPHERE, m.primary); trap.position.set(sx * 0.28, 0.42, 0.05); trap.scale.set(0.18, 0.12, 0.14); torso.add(trap);
+          }
+          for (let i = 0; i < 3; i++) {
+            for (const sx of [-1, 1]) {
+              const ab = mesh(UNIT_SPHERE, m.primary);
+              ab.position.set(sx * 0.12, -0.05 - i * 0.14, 0.3);
+              ab.scale.set(0.14, 0.1, 0.1); torso.add(ab);
+            }
+          }
+          const navel = mesh(UNIT_SPHERE, m.secondary); navel.position.set(0, -0.2, 0.35); navel.scale.set(0.06, 0.05, 0.04); torso.add(navel);
         } else if (s === 'suit') {
-          for (const side of [-1, 1]) { const panel = mesh(UNIT_BOX, m.secondary); panel.position.set(side * 0.36, -0.1, 0.12); panel.scale.set(0.16, 0.85, 0.5); torso.add(panel); }
+          // Spider-Man: raised chest emblem zone + side webbings + abs panels
+          for (const side of [-1, 1]) {
+            const panel = mesh(UNIT_BOX, m.secondary); panel.position.set(side * 0.36, -0.1, 0.12); panel.scale.set(0.16, 0.85, 0.5); torso.add(panel);
+          }
+          // Spider emblem base (raised diamond)
+          const emblem = mesh(UNIT_BOX, m.secondary);
+          emblem.position.set(0, 0.18, 0.45); emblem.scale.set(0.22, 0.28, 0.08); emblem.rotation.z = Math.PI / 4; torso.add(emblem);
+          const emblemIn = mesh(UNIT_BOX, m.primary);
+          emblemIn.position.set(0, 0.18, 0.5); emblemIn.scale.set(0.14, 0.18, 0.05); emblemIn.rotation.z = Math.PI / 4; torso.add(emblemIn);
+          // Web-line ridges on torso
+          for (let i = 0; i < 5; i++) {
+            const ridge = mesh(UNIT_BOX, m.secondary);
+            ridge.position.set(0, 0.35 - i * 0.18, 0.4);
+            ridge.scale.set(0.55 - i * 0.04, 0.02, 0.03); torso.add(ridge);
+          }
+        } else if (s === 'organic') {
+          // Venom: glossy mass with white spider-chest mark
+          for (const sx of [-1, 1]) {
+            const mass = mesh(UNIT_SPHERE, m.primary);
+            mass.position.set(sx * 0.18, 0.15, 0.3); mass.scale.set(0.28, 0.35, 0.2); torso.add(mass);
+          }
+          // White spider emblem (abstract)
+          const mark = mesh(UNIT_BOX, m.eyes);
+          mark.position.set(0, 0.15, 0.48); mark.scale.set(0.18, 0.32, 0.06); torso.add(mark);
+          for (const sx of [-1, 1]) {
+            const leg = mesh(UNIT_BOX, m.eyes);
+            leg.position.set(sx * 0.16, 0.05, 0.46); leg.scale.set(0.06, 0.22, 0.04); leg.rotation.z = sx * 0.5; torso.add(leg);
+            const leg2 = mesh(UNIT_BOX, m.eyes);
+            leg2.position.set(sx * 0.2, 0.28, 0.46); leg2.scale.set(0.05, 0.16, 0.04); leg2.rotation.z = sx * -0.4; torso.add(leg2);
+          }
         }
         return (f) => {
           const j = f.joints;
@@ -164,23 +226,51 @@ export class ArmorRig {
         };
       });
       case 'core': return this.add(id, ['lShoulder', 'rShoulder', 'lHip', 'rHip'], (g, m) => {
-        const disc = mesh(DISC, s === 'metal' ? m.energy : m.eyes);
-        disc.rotation.x = Math.PI / 2;
-        const ring = mesh(UNIT_RING, m.trim); ring.rotation.x = Math.PI / 2;
-        if (s !== 'metal') { disc.geometry = UNIT_BOX; disc.rotation.set(0, 0, Math.PI / 4); }
-        const glow = makeGlow(d.palette.energy, 10, s === 'metal' ? 0.9 : 0);
+        // Layered 3D arc-reactor assembly for Iron Man; simplified markers for others.
+        const housing = mesh(new THREE.CylinderGeometry(1, 1.05, 0.22, 48, 1, false), m.trim);
+        housing.rotation.x = Math.PI / 2;
+        const outerRing = mesh(new THREE.TorusGeometry(0.92, 0.07, 12, 48), m.trim);
+        const midRing = mesh(new THREE.TorusGeometry(0.68, 0.045, 10, 40), m.secondary);
+        const innerRing = mesh(new THREE.TorusGeometry(0.42, 0.035, 10, 32), m.trim);
+        const coreDisc = mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 32), m.energy);
+        coreDisc.rotation.x = Math.PI / 2;
+        const glass = mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.04, 48), new THREE.MeshPhysicalMaterial({
+          color: '#a8ecff', metalness: 0.1, roughness: 0.05, transmission: 0.55, transparent: true, opacity: 0.45, thickness: 0.4,
+        }));
+        glass.rotation.x = Math.PI / 2; glass.position.z = 0.12;
+        for (let i = 0; i < 8; i++) {
+          const spoke = mesh(UNIT_BOX, m.secondary);
+          const ang = (i / 8) * Math.PI * 2;
+          spoke.position.set(Math.cos(ang) * 0.55, Math.sin(ang) * 0.55, 0.02);
+          spoke.rotation.z = ang;
+          spoke.scale.set(0.28, 0.06, 0.04);
+          housing.add(spoke);
+        }
+        const glow = makeGlow(d.palette.energy, 14, s === 'metal' ? 0.95 : 0.4);
         this.coreGlow = glow;
-        g.add(ring, disc, glow);
-        return (f) => {
+        const assembly = new THREE.Group();
+        if (s === 'metal') {
+          assembly.add(housing, outerRing, midRing, innerRing, coreDisc, glass, glow);
+          outerRing.position.z = 0.06; midRing.position.z = 0.08; innerRing.position.z = 0.1;
+          coreDisc.position.z = 0.05;
+        } else {
+          const disc = mesh(DISC, m.eyes); disc.rotation.x = Math.PI / 2;
+          disc.geometry = UNIT_BOX; disc.rotation.set(0, 0, Math.PI / 4);
+          assembly.add(disc, glow);
+        }
+        g.add(assembly);
+        return (f, t) => {
           const j = f.joints;
           const sm = { x: (j.lShoulder.x + j.rShoulder.x) / 2, y: (j.lShoulder.y + j.rShoulder.y) / 2 };
           const hm = { x: (j.lHip.x + j.rHip.x) / 2, y: (j.lHip.y + j.rHip.y) / 2 };
-          const x = sm.x * 0.78 + hm.x * 0.22, y = sm.y * 0.78 + hm.y * 0.22, z = f.shoulderWidth * 0.5;
-          const r = f.shoulderWidth * (s === 'metal' ? 0.2 : 0.12);
-          disc.position.set(x, y, z); ring.position.set(x, y, z - 1);
-          if (s === 'metal') { disc.scale.set(r, r, r); ring.scale.set(r * 0.55, r * 0.6, r * 0.55); }
-          else { disc.scale.set(r, r * 1.4, 2); ring.scale.set(0.001, 0.001, 0.001); }
-          glow.position.set(x, y, z + 2); glow.scale.setScalar(r * 4.5);
+          const x = sm.x * 0.78 + hm.x * 0.22, y = sm.y * 0.78 + hm.y * 0.22, z = f.shoulderWidth * 0.52;
+          const r = f.shoulderWidth * (s === 'metal' ? 0.175 : 0.12);
+          assembly.position.set(x, y, z);
+          assembly.scale.setScalar(r);
+          const pulse = 1 + 0.06 * Math.sin(t * 3.2);
+          if (s === 'metal') coreDisc.scale.set(pulse, pulse, 1);
+          glow.position.set(x, y, z + r * 0.4);
+          glow.scale.setScalar(r * 5.2 * pulse);
           return { x, y, z, v: 1 };
         };
       });
@@ -271,33 +361,82 @@ export class ArmorRig {
         const skull = mesh(UNIT_SPHERE, m.primary); skull.scale.set(1, 1.18, 1.05); head.add(skull);
         const glows: THREE.Sprite[] = [];
         if (d.headStyle === 'helmet') {
-          const face = mesh(UNIT_SPHERE, m.trim); face.scale.set(0.8, 0.95, 0.6); face.position.set(0, -0.08, 0.5); head.add(face);
+          // Iron Man: sculpted helmet — crown, cheeks, gold faceplate, eye slits, chin
+          skull.scale.set(1.02, 1.12, 1.08);
+          const crown = mesh(UNIT_DOME, m.primary);
+          crown.scale.set(1.08, 0.72, 1.05); crown.position.set(0, 0.38, -0.05); head.add(crown);
           for (const sx of [-1, 1]) {
-            const eye = mesh(UNIT_BOX, m.eyes); eye.position.set(sx * 0.3, 0.05, 1.05); eye.scale.set(0.3, 0.07, 0.05); eye.rotation.z = sx * -0.12; head.add(eye);
-            const gl = makeGlow(d.palette.energy, 1, 0.8); gl.position.set(sx * 0.3, 0.05, 1.2); gl.scale.setScalar(0.6); head.add(gl); glows.push(gl);
+            const cheek = mesh(UNIT_SPHERE, m.primary);
+            cheek.scale.set(0.38, 0.55, 0.48); cheek.position.set(sx * 0.72, -0.12, 0.15); head.add(cheek);
+            const temple = mesh(UNIT_BOX, m.trim);
+            temple.scale.set(0.12, 0.28, 0.35); temple.position.set(sx * 0.85, 0.18, 0.25); temple.rotation.z = sx * -0.25; head.add(temple);
           }
-          const mouth = mesh(UNIT_BOX, m.secondary); mouth.position.set(0, -0.45, 1.0); mouth.scale.set(0.35, 0.03, 0.05); head.add(mouth);
+          const face = mesh(UNIT_SPHERE, m.trim);
+          face.scale.set(0.78, 0.88, 0.55); face.position.set(0, -0.06, 0.55); head.add(face);
+          const brow = mesh(UNIT_BOX, m.primary);
+          brow.position.set(0, 0.22, 0.95); brow.scale.set(0.95, 0.12, 0.22); head.add(brow);
+          for (const sx of [-1, 1]) {
+            const socket = mesh(UNIT_BOX, m.secondary);
+            socket.position.set(sx * 0.28, 0.06, 1.02); socket.scale.set(0.32, 0.12, 0.08); socket.rotation.z = sx * -0.15; head.add(socket);
+            const eye = mesh(UNIT_BOX, m.eyes);
+            eye.position.set(sx * 0.28, 0.06, 1.08); eye.scale.set(0.26, 0.055, 0.04); eye.rotation.z = sx * -0.15; head.add(eye);
+            const gl = makeGlow(d.palette.energy, 1.2, 0.9); gl.position.set(sx * 0.28, 0.06, 1.18); gl.scale.setScalar(0.55); head.add(gl); glows.push(gl);
+          }
+          const jaw = mesh(UNIT_BOX, m.primary);
+          jaw.position.set(0, -0.58, 0.42); jaw.scale.set(0.72, 0.28, 0.55); head.add(jaw);
+          const chin = mesh(UNIT_BOX, m.trim);
+          chin.position.set(0, -0.72, 0.55); chin.scale.set(0.38, 0.14, 0.28); head.add(chin);
+          const mouth = mesh(UNIT_BOX, m.secondary);
+          mouth.position.set(0, -0.42, 1.0); mouth.scale.set(0.32, 0.04, 0.05); head.add(mouth);
         } else if (d.headStyle === 'mask') {
-          // original angular hexagonal lenses
+          // Spider-Man: full mask with large white eye lenses + web ridges
+          skull.scale.set(1.02, 1.08, 1.05);
           const lensShape = new THREE.Shape();
-          [[0, 0], [0.42, 0.12], [0.5, 0.32], [0.3, 0.42], [0.05, 0.3]].forEach(([x, y], i) => (i ? lensShape.lineTo(x, y) : lensShape.moveTo(x, y)));
+          [[0, 0], [0.48, 0.08], [0.58, 0.35], [0.35, 0.5], [0.05, 0.32]].forEach(([x, y], i) => (i ? lensShape.lineTo(x, y) : lensShape.moveTo(x, y)));
           const lens = new THREE.ShapeGeometry(lensShape);
           for (const sx of [-1, 1]) {
-            const border = mesh(lens, m.secondary); border.scale.set(sx * 1.18, 1.18, 1); border.position.set(sx * 0.06 - (sx > 0 ? 0.03 : -0.03), -0.06, 1.0); head.add(border);
-            const eye = mesh(lens, m.eyes); eye.scale.set(sx, 1, 1); eye.position.set(sx * 0.08, -0.02, 1.03); head.add(eye);
+            const border = mesh(lens, m.secondary); border.scale.set(sx * 1.25, 1.25, 1); border.position.set(sx * 0.05, -0.02, 0.98); head.add(border);
+            const eye = mesh(lens, m.eyes); eye.scale.set(sx * 1.05, 1.05, 1); eye.position.set(sx * 0.06, 0.0, 1.02); head.add(eye);
+            const gl = makeGlow('#ffffff', 0.8, 0.5); gl.position.set(sx * 0.22, 0.12, 1.15); gl.scale.setScalar(0.45); head.add(gl); glows.push(gl);
+          }
+          // Web ridge lines across mask
+          for (let i = 0; i < 4; i++) {
+            const ridge = mesh(UNIT_BOX, m.secondary);
+            ridge.position.set(0, 0.55 - i * 0.28, 0.85);
+            ridge.scale.set(0.9 - i * 0.08, 0.025, 0.04); head.add(ridge);
           }
         } else if (d.headStyle === 'bare') {
-          const hair = mesh(UNIT_DOME, new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.9, transparent: true }));
-          hair.scale.set(1.04, 0.9, 1.08); hair.position.y = 0.12; head.add(hair);
-          const brow = mesh(UNIT_BOX, m.primary); brow.position.set(0, 0.22, 0.92); brow.scale.set(0.9, 0.16, 0.25); head.add(brow);
-          for (const sx of [-1, 1]) { const eye = mesh(UNIT_SPHERE, m.eyes); eye.position.set(sx * 0.28, 0.08, 0.95); eye.scale.set(0.09, 0.05, 0.05); head.add(eye); }
-          const jaw = mesh(UNIT_BOX, m.primary); jaw.position.set(0, -0.62, 0.45); jaw.scale.set(0.95, 0.35, 0.7); head.add(jaw);
+          // Hulk: heavy brow, wide jaw, dark hair dome
+          skull.scale.set(1.08, 1.15, 1.1);
+          const hair = mesh(UNIT_DOME, new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.9 }));
+          hair.scale.set(1.08, 0.85, 1.1); hair.position.y = 0.18; head.add(hair);
+          const brow = mesh(UNIT_BOX, m.primary); brow.position.set(0, 0.28, 0.9); brow.scale.set(1.05, 0.22, 0.3); head.add(brow);
+          for (const sx of [-1, 1]) {
+            const eye = mesh(UNIT_SPHERE, m.eyes); eye.position.set(sx * 0.3, 0.06, 0.98); eye.scale.set(0.1, 0.06, 0.05); head.add(eye);
+            const gl = makeGlow(d.palette.energy, 0.6, 0.35); gl.position.set(sx * 0.3, 0.06, 1.1); gl.scale.setScalar(0.35); head.add(gl); glows.push(gl);
+          }
+          const nose = mesh(UNIT_BOX, m.primary); nose.position.set(0, -0.08, 1.0); nose.scale.set(0.18, 0.2, 0.2); head.add(nose);
+          const jaw = mesh(UNIT_BOX, m.primary); jaw.position.set(0, -0.55, 0.5); jaw.scale.set(1.05, 0.4, 0.75); head.add(jaw);
+          const mouth = mesh(UNIT_BOX, m.secondary); mouth.position.set(0, -0.45, 0.95); mouth.scale.set(0.4, 0.08, 0.08); head.add(mouth);
         } else {
-          // organic: large swept pale eye shapes (original design)
+          // Venom: oversized white eyes, jagged mouth suggestion, glossy skull
+          skull.scale.set(1.08, 1.2, 1.12);
           const sh = new THREE.Shape();
-          sh.moveTo(0, 0); sh.quadraticCurveTo(0.35, 0.05, 0.62, 0.42); sh.quadraticCurveTo(0.3, 0.3, 0.02, 0.18); sh.lineTo(0, 0);
-          const eg = new THREE.ShapeGeometry(sh, 12);
-          for (const sx of [-1, 1]) { const eye = mesh(eg, m.eyes); eye.scale.set(sx * 0.95, 0.95, 1); eye.position.set(sx * 0.07, -0.12, 1.06); head.add(eye); }
+          sh.moveTo(0, 0); sh.quadraticCurveTo(0.4, 0.02, 0.72, 0.48); sh.quadraticCurveTo(0.35, 0.35, 0.02, 0.2); sh.lineTo(0, 0);
+          const eg = new THREE.ShapeGeometry(sh, 14);
+          for (const sx of [-1, 1]) {
+            const eye = mesh(eg, m.eyes); eye.scale.set(sx * 1.15, 1.15, 1); eye.position.set(sx * 0.05, -0.08, 1.05); head.add(eye);
+            const gl = makeGlow('#eef0ff', 1.0, 0.7); gl.position.set(sx * 0.25, 0.08, 1.2); gl.scale.setScalar(0.55); head.add(gl); glows.push(gl);
+          }
+          // Jagged mouth row
+          for (let i = -3; i <= 3; i++) {
+            const tooth = mesh(UNIT_BOX, m.eyes);
+            tooth.position.set(i * 0.1, -0.5, 0.95);
+            tooth.scale.set(0.06, 0.12 + (Math.abs(i) % 2) * 0.06, 0.05);
+            head.add(tooth);
+          }
+          const chin = mesh(UNIT_SPHERE, m.primary);
+          chin.position.set(0, -0.7, 0.4); chin.scale.set(0.55, 0.35, 0.45); head.add(chin);
         }
         return (f) => {
           const j = f.joints;
@@ -353,7 +492,8 @@ export class ArmorRig {
     for (const c of this.comps.values()) {
       const p = progress.get(c.id) ?? 1;
       const visibleJoints = f.simulated || c.joints.every((j) => f.joints[j].v > 0.45);
-      if (p <= 0.001 || !visibleJoints) { c.group.visible = false; continue; }
+      // Hide procedural plates when a GLB model is driving the silhouette; keep palm emitters usable.
+      if (this.proceduralHidden || p <= 0.001 || !visibleJoints) { c.group.visible = false; continue; }
       c.group.visible = true;
       c.group.position.set(0, 0, 0); c.group.scale.setScalar(1);
       const anchor = c.place(f, t);

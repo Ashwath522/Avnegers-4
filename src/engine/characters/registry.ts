@@ -11,9 +11,9 @@ const BODY: ComponentId[] = [
 
 export const APEX: CharacterDef = {
   id: 'apex',
-  name: 'Apex Armor',
-  archetype: 'Technological armored hero',
-  tagline: 'Advanced tech suit',
+  name: 'Iron Man',
+  archetype: 'Genius billionaire in powered armor',
+  tagline: 'Repulsors online',
   palette: { primary: '#b3121c', secondary: '#2a2d33', trim: '#d9a441', energy: '#5fe1ff', eyes: '#bff6ff' },
   surface: 'metal', headStyle: 'helmet', bulk: 1,
   components: BODY,
@@ -35,9 +35,9 @@ export const APEX: CharacterDef = {
 
 export const WEBRUNNER: CharacterDef = {
   id: 'webrunner',
-  name: 'Webrunner',
-  archetype: 'Agile web-slinging hero',
-  tagline: 'Agile & fast',
+  name: 'Spider-Man',
+  archetype: 'Friendly neighborhood web-slinger',
+  tagline: 'With great power…',
   palette: { primary: '#8e0f2a', secondary: '#141c3a', trim: '#c9d3ff', energy: '#e9f1ff', eyes: '#e8f4ff' },
   surface: 'suit', headStyle: 'mask', bulk: 0.78,
   components: BODY,
@@ -57,15 +57,15 @@ export const WEBRUNNER: CharacterDef = {
 
 export const TITAN: CharacterDef = {
   id: 'titan',
-  name: 'Verdant Titan',
-  archetype: 'Massive superhuman powerhouse',
-  tagline: 'Pure strength',
+  name: 'Hulk',
+  archetype: 'The strongest there is',
+  tagline: 'Hulk smash!',
   palette: { primary: '#2f6e2c', secondary: '#2b2622', trim: '#5c4a35', energy: '#38ff8b', eyes: '#b9ffcf' },
   surface: 'skin', headStyle: 'bare', bulk: 1.6,
   components: BODY.filter((c) => c !== 'core'),
   powers: [
-    { id: 'punch', name: 'Titan Punch', kind: 'punch', gesture: 'punch', hint: 'Throw a fast punch outward', description: 'Short-range impact with heavy knockback.', tuning: T({ intensity: 1.6, range: 3.5, speed: 0, cooldownMs: 450, color: '#38ff8b' }) },
-    { id: 'slam', name: 'Ground Slam', kind: 'slam', gesture: 'slam', hint: 'Raise both arms overhead, then drive them down', description: 'Shockwave along the ground that launches everything it reaches.', tuning: T({ intensity: 1.8, range: 14, speed: 16, cooldownMs: 1200, color: '#38ff8b' }) },
+    { id: 'punch', name: 'Hulk Punch', kind: 'punch', gesture: 'punch', hint: 'Throw a fast punch outward', description: 'Short-range impact with heavy knockback.', tuning: T({ intensity: 1.6, range: 3.5, speed: 0, cooldownMs: 450, color: '#38ff8b' }) },
+    { id: 'slam', name: 'Hulk Smash', kind: 'slam', gesture: 'slam', hint: 'Raise both arms overhead, then drive them down', description: 'Shockwave along the ground that launches everything it reaches.', tuning: T({ intensity: 1.8, range: 14, speed: 16, cooldownMs: 1200, color: '#38ff8b' }) },
   ],
   sequence: [
     { id: 'surge', label: 'Gamma Surge', components: [], start: 0, duration: 800, effect: 'converge' },
@@ -79,9 +79,9 @@ export const TITAN: CharacterDef = {
 
 export const SYMBIONT: CharacterDef = {
   id: 'symbiont',
-  name: 'Void Symbiont',
-  archetype: 'Alien organic shadow warrior',
-  tagline: 'Adaptive organic suit',
+  name: 'Venom',
+  archetype: 'Symbiote anti-hero',
+  tagline: 'We are Venom',
   palette: { primary: '#0b0b10', secondary: '#1b1626', trim: '#3a2a55', energy: '#a35bff', eyes: '#eef0ff' },
   surface: 'organic', headStyle: 'organic', bulk: 1.1,
   components: [...BODY.filter((c) => c !== 'core'), 'tendrils'],
